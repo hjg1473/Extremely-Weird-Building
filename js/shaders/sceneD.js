@@ -3,52 +3,56 @@
 // that cannot exist, and space itself twists the farther it gets from you.
 SHADERS.D = {
 defs: `
-#define MAXSTEPS 180
-#define STEPK 0.8
-#define MAXD 380.
-#define SHSTEPS 24
-const float S = 24.;
+const float S_D = 24.;
 
-vec3 warp(vec3 p, out float lip){
-  vec3 w = p - uCam;
+vec3 warpD(vec3 p, out float lip){
+  vec3 w = p - uWarpC;
   float k = uWarp*(0.008 + 0.006*sin(uTime*0.09));
   w.xy *= rot(w.z*k);
   w.zx *= rot(w.y*k*0.7);
   lip = 1. + abs(k)*1.8*length(w);
-  return w + uCam;
+  return w + uWarpC;
 }
 vec3 permv(vec3 v, float h){
   int k = int(h*6.);
   return k == 0 ? v : k == 1 ? v.yzx : k == 2 ? v.zxy : k == 3 ? v.xzy : k == 4 ? v.yxz : v.zyx;
 }
+// integer hash: reproduced bit-for-bit in main.js so gravity matches what you see
+uint roomHash(vec3 id){
+  uvec3 c = uvec3(ivec3(id) + ivec3(1 << 20));
+  uint h = c.x*73856093u ^ c.y*19349663u ^ c.z*83492791u;
+  h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+  return h;
+}
 vec3 roomR(vec3 q, vec3 id){
-  float h1 = hash13(id + .17), h2 = hash13(id*1.31 + 4.2);
-  vec3 sg = vec3(h2 > .5 ? 1. : -1., fract(h2*7.13) > .5 ? 1. : -1., fract(h2*13.7) > .5 ? 1. : -1.);
-  return permv(q, h1)*sg;
+  if(id == vec3(0.)) return q;
+  uint h = roomHash(id);
+  vec3 sg = vec3((h & 8u) != 0u ? 1. : -1., (h & 16u) != 0u ? 1. : -1., (h & 32u) != 0u ? 1. : -1.);
+  return permv(q, float(h % 6u)/6. + 0.01)*sg;
 }
 
-vec2 room(vec3 q, vec3 id){
+vec2 roomD(vec3 q, vec3 id){
   vec3 aq = abs(q);
   float wall = -sdBox(q, vec3(11.));
-  float hx = max(sdBox2(q.yz, vec2(3.)), 10.4 - aq.x);
-  float hy = max(sdBox2(q.xz, vec2(3.)), 10.4 - aq.y);
-  float hz = max(sdBox2(q.xy, vec2(3.)), 10.4 - aq.z);
-  float wx = max(max(sdBox2(abs(q.yz) - 7., vec2(2.)), 10.5 - aq.x), aq.x - 11.6);
-  float wy = max(max(sdBox2(abs(q.xz) - 7., vec2(2.)), 10.5 - aq.y), aq.y - 11.6);
-  float wz = max(max(sdBox2(abs(q.xy) - 7., vec2(2.)), 10.5 - aq.z), aq.z - 11.6);
+  float hx = max(sdBox2(q.yz, vec2(3.)), 8.5 - aq.x);
+  float hy = max(sdBox2(q.xz, vec2(3.)), 8.5 - aq.y);
+  float hz = max(sdBox2(q.xy, vec2(3.)), 8.5 - aq.z);
+  float wx = max(max(sdBox2(abs(q.yz) - 7., vec2(2.)), 8.5 - aq.x), aq.x - 12.5);
+  float wy = max(max(sdBox2(abs(q.xz) - 7., vec2(2.)), 8.5 - aq.y), aq.y - 12.5);
+  float wz = max(max(sdBox2(abs(q.xy) - 7., vec2(2.)), 8.5 - aq.z), aq.z - 12.5);
   wall = max(wall, -min(min(min(hx, hy), hz), min(min(wx, wy), wz)));
   vec2 res = vec2(wall, 1.);
 
   vec3 r = roomR(q, id);
   // bridge between two doors
-  res = opU(res, vec2(sdBox(r - vec3(0., -3.35, 0.), vec3(12., 0.35, 3.)), 2.));
-  res = opU(res, vec2(sdBox(vec3(r.x, r.y + 2.4, abs(r.z) - 2.85), vec3(10.8, 0.6, 0.07)), 3.));
+  res = opU(res, vec2(min(sdBox(r - vec3(0., -3.35, 0.), vec3(12., 0.35, 3.)), sdBox(r - vec3(0., -3.35, 0.), vec3(3., 0.35, 12.))), 2.));
+  res = opU(res, vec2(max(sdBox(vec3(r.x, r.y + 2.4, abs(r.z) - 2.85), vec3(10.8, 0.6, 0.07)), 3.2 - abs(r.x)), 3.));
   // stair: floor -> bridge
-  res = opU(res, vec2(stairStraight(vec3(10.6 - r.z, r.y + 11., r.x - 6.), 7.6, 8., 16., 1.5, 0.5), 2.));
+  res = opU(res, vec2(stairStraight(vec3(10.6 - r.z, r.y + 11., r.x - 6.), 7.6, 8., 34., 1.5, 0.5), 2.));
   // mezzanine + stair: bridge -> mezzanine
   res = opU(res, vec2(sdBox(r - vec3(4., 3.6, 7.4), vec3(7., 0.4, 3.6)), 2.));
   res = opU(res, vec2(sdBox(vec3(r.x - 4., r.y - 4.6, r.z - 3.9), vec3(7., 0.6, 0.07)), 3.));
-  res = opU(res, vec2(stairStraight(vec3(r.x + 10., r.y + 3., r.z - 5.4), 7., 7., 14., 1.4, 0.45), 2.));
+  res = opU(res, vec2(stairStraight(vec3(r.x + 10., r.y + 3., r.z - 5.4), 7., 7., 30., 1.4, 0.45), 2.));
   // columns under the mezzanine
   float cxz = min(length(r.xz - vec2(-2.6, 10.4)), length(r.xz - vec2(10.4, 4.2)));
   res = opU(res, vec2(max(cxz - 0.32, abs(r.y + 3.9) - 7.1), 3.));
@@ -59,27 +63,39 @@ vec2 room(vec3 q, vec3 id){
   // hanging lamp
   res = opU(res, vec2(length(r - vec3(-6., 6., -6.)) - 0.55, 6.));
   res = opU(res, vec2(max(length(r.xz - vec2(-6.)) - 0.03, abs(r.y - 8.8) - 2.3), 3.));
+  // room 0 still has the house's bedroom door standing in its doorway
+  if(id == vec3(0.)){
+    float pan = max(sdBox(q - vec3(0., 0., 11.35), vec3(3.05, 3.05, 0.12)), -sdBox(q - vec3(0., -1.9, 11.35), vec3(0.6, 1.1, 2.)));
+    res = opU(res, vec2(pan, 7.));
+  }
   return res;
 }
 
-vec2 map(vec3 p){
+vec2 mapD(vec3 p){
   float lip;
-  vec3 w = warp(p, lip);
-  vec3 id = floor(w/S);
-  vec3 q = w - (id + .5)*S;
-  vec2 res = room(q, id);
+  vec3 w = warpD(p, lip);
+  vec3 id = floor(w/S_D);
+  vec3 q = w - (id + .5)*S_D;
+  vec2 res = roomD(q, id);
   vec3 aq = abs(q);
+#ifdef PROBE
+  // collision: look into the neighbouring room across the nearest wall instead of clamping
+  vec3 ax = aq.x >= max(aq.y, aq.z) ? vec3(1, 0, 0) : (aq.y >= aq.z ? vec3(0, 1, 0) : vec3(0, 0, 1));
+  vec3 id2 = id + ax*sign(q);
+  vec3 q2 = w - (id2 + .5)*S_D;
+  vec2 r2 = roomD(q2, id2);
+  r2.x = max(r2.x, sdBox(q2, vec3(12.)));   // the neighbour only exists inside its own cell
+  res = opU(res, r2);
+#else
   res.x = min(res.x, 12. - max(aq.x, max(aq.y, aq.z)) + 0.25);
+#endif
   res.x /= lip;
   return res;
 }
-float mapS(vec3 p){ return map(p).x; }
-vec3 fogCol(vec3 rd, int l){ return vec3(0.40, 0.34, 0.28) + vec3(0.1, 0.12, 0.16)*rd.y; }
-float fogDen(int l){ return 0.017; }
+vec3 fogColD(vec3 rd){ return vec3(0.40, 0.34, 0.28) + vec3(0.1, 0.12, 0.16)*rd.y; }
 vec3 skyD(vec3 rd){
   return skyGrad(rd, normalize(vec3(0.4, 0.5, -0.6)), vec3(0.12, 0.3, 0.68), vec3(0.7, 0.78, 0.88), vec3(1., 0.9, 0.7), 1.0);
 }
-vec3 sky(vec3 rd){ return fogCol(rd, 0); }
 
 vec3 painting(vec2 uv, float s){
   vec3 top = 0.5 + 0.5*cos(TAU*(s + vec3(0., 0.33, 0.67)));
@@ -95,11 +111,11 @@ vec3 painting(vec2 uv, float s){
 }
 `,
 shade: `
-vec3 shade(vec3 p, vec3 n, vec3 rd, float m, float t){
+vec3 shadeD(vec3 p, vec3 n, vec3 rd, float m, float t){
   float lip;
-  vec3 w = warp(p, lip);
-  vec3 id = floor(w/S);
-  vec3 q = w - (id + .5)*S;
+  vec3 w = warpD(p, lip);
+  vec3 id = floor(w/S_D);
+  vec3 q = w - (id + .5)*S_D;
   vec3 aq = abs(q);
   vec3 r = roomR(q, id);
   vec3 alb = vec3(0.7); float spec = 0.05; vec3 emi = vec3(0.);
@@ -130,9 +146,10 @@ vec3 shade(vec3 p, vec3 n, vec3 rd, float m, float t){
     if(r.x < -10.7 && abs(r.y) < 1.75 && abs(abs(r.z) - 7.) < 1.25) cu = vec2((abs(r.z) - 7.)/1.25*sign(r.z), r.y/1.75);
     if(r.z < -10.7 && abs(r.y) < 1.75 && abs(abs(r.x) - 7.) < 1.25) cu = vec2((abs(r.x) - 7.)/1.25*sign(r.x), r.y/1.75);
     if(cu.x < 5.) return painting(cu, hash13(id + sign(r.x + r.z)*0.37))*0.9;
-  } else { emi = vec3(1.0, 0.75, 0.45)*4.; alb = vec3(0.); }
+  } else if(m < 6.5){ emi = vec3(1.0, 0.75, 0.45)*4.; alb = vec3(0.); }
+  else { alb = vec3(0.66, 0.58, 0.45); }
 
-  vec3 lp = (id + .5)*S - w;         // room-centre light (in warped space)
+  vec3 lp = (id + .5)*S_D - w;         // room-centre light (in warped space)
   float ld = length(lp);
   vec3 Ld = lp/ld;
   float ao = calcAO(p, n, 1.3);

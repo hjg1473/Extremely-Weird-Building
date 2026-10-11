@@ -1,307 +1,474 @@
-// Impossible Architecture — WebGL2 raymarching explorer. No libraries, no meshes, no textures.
+// An Ordinary House — one continuous raymarched world explored on foot.
+// No libraries, no meshes, no textures. Collision reads the same distance field the GPU draws.
 (() => {
 'use strict';
 
-// ---------- small vector helpers ----------
+// ---------- vector helpers ----------
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const len = a => Math.hypot(a[0], a[1], a[2]);
 const norm = a => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const wrap = (v, period) => ((v + period / 2) % period + period) % period - period / 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// rotate v around unit axis k by angle a (Rodrigues)
+function rotAxis(v, k, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return add(add(mul(v, c), mul(cross(k, v), s)), mul(k, dot(k, v) * (1 - c)));
+}
 
-// ---------- scene B portal logic (mirrors the shader) ----------
-const B = { K: 30, SH: 3, DW: 0.8, DH: 2.4, C0: [0, 3, 0], C1: [0, -87, 0] };
-function portalB(cam, np) {
-  const p = cam.pos;
-  const C = cam.lvl === 0 ? B.C0 : B.C1;
-  const zp = C[2] + B.SH;
-  if (p[2] > zp && np[2] <= zp) {
-    const ip = lerp3(p, np, (p[2] - zp) / (p[2] - np[2]));
-    if (Math.abs(ip[0] - C[0]) < B.DW && ip[1] > C[1] - B.SH && ip[1] < C[1] - B.SH + B.DH) {
-      cam.pos = mul(sub(np, C), B.K); cam.lvl++; return true;
-    }
-  }
-  if (cam.lvl > 0) {
-    const zh = B.SH * B.K;
-    if (p[2] < zh && np[2] >= zh) {
-      const ip = lerp3(p, np, (zh - p[2]) / (np[2] - p[2]));
-      if (Math.abs(ip[0]) < B.DW * B.K && ip[1] > -B.SH * B.K && ip[1] < -B.SH * B.K + B.DH * B.K) {
-        cam.lvl--; cam.pos = add(mul(np, 1 / B.K), cam.lvl === 0 ? B.C0 : B.C1); return true;
+// ---------- world constants (mirror js/shaders/world.js + sceneTower.js) ----------
+const TOWER = 0, ROOMS = 1;
+const FH = 3.6, SQ_IN = 30, SQ_OUT = 42, UW = 12, R_ATR = 26.5;
+const RD_D = [12, 9, 24], BED_D = 2.6, BED_L = -4.1;
+const sideOf = p => Math.abs(p[0]) >= Math.abs(p[2]) ? (p[0] > 0 ? 0 : 2) : (p[2] > 0 ? 1 : 3);
+const toSide = (p, s) => s === 0 ? p.slice() : s === 1 ? [p[2], p[1], -p[0]] : s === 2 ? [-p[0], p[1], -p[2]] : [-p[2], p[1], p[0]];
+const fromSide = (c, s) => s === 0 ? c.slice() : s === 1 ? [-c[2], c[1], c[0]] : s === 2 ? [-c[0], c[1], -c[2]] : [c[2], c[1], -c[0]];
+function crossT(a, b, v, dir) {
+  if (dir < 0 ? (a > v && b <= v) : (a < v && b >= v)) return (a - v) / (a - b);
+  return -1;
+}
+// rooms: same integer hash as the shader -> same gravity as what you see
+function roomHash(id) {
+  const c = id.map(v => (v + (1 << 20)) >>> 0);
+  let h = (Math.imul(c[0], 73856093) ^ Math.imul(c[1], 19349663) ^ Math.imul(c[2], 83492791)) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0; h = Math.imul(h, 0x5bd1e995) >>> 0; h = (h ^ (h >>> 15)) >>> 0;
+  return h;
+}
+function roomUp(pos) {
+  const id = pos.map(v => Math.floor(v / 24));
+  if (id[0] === 0 && id[1] === 0 && id[2] === 0) return [0, 1, 0];
+  const h = roomHash(id);
+  const axis = [1, 2, 0, 2, 0, 1][h % 6];
+  const s = (h & 16) ? 1 : -1;
+  const u = [0, 0, 0]; u[axis] = s; return u;
+}
+function roomWindow(q) {
+  const aq = q.map(Math.abs), mx = Math.max(...aq);
+  if (mx < 11.5) return null;
+  const ax = aq[0] >= mx ? 0 : aq[1] >= mx ? 1 : 2;
+  const fw = [0, 1, 2].filter(i => i !== ax).map(i => q[i]);
+  if (Math.max(Math.abs(Math.abs(fw[0]) - 7), Math.abs(Math.abs(fw[1]) - 7)) > 2.05) return null;
+  return q.map((v, i) => Math.sign(v) * (i === ax ? 11.6 : 7));
+}
+// the flat the player entered the rooms from: [side, floor base y, unit centre]
+const home = [0, 1202 * 3.6, 0];
+
+// Crossing from p to np: returns {pos, space, rot} if a portal took us somewhere else.
+// rot(v) re-expresses a direction in the new space.
+function camPortal(space, p, np) {
+  let f;
+  if (space === TOWER) {
+    const s = sideOf(p), c0 = toSide(p, s), c1 = toSide(np, s);
+    if (Math.abs(c0[2]) < SQ_IN && c0[0] > SQ_IN && c0[0] < SQ_IN + 6) {
+      const uz = clamp(Math.round(c0[2] / UW), -2, 2);
+      if ((f = crossT(c0[2] - uz * UW, c1[2] - uz * UW, BED_L, -1)) >= 0) {
+        const ip = lerp3(c0, c1, f);
+        const fl = Math.floor(ip[1] / FH), fy = ip[1] - fl * FH;
+        if (Math.abs(ip[0] - SQ_IN - BED_D) < 0.6 && fy > -0.5 && fy < 2.6) {
+          home[0] = s; home[1] = fl * FH; home[2] = uz * UW;
+          const fy1 = c1[1] - fl * FH;
+          return { pos: add(RD_D, [c1[0] - SQ_IN - BED_D, fy1, c1[2] - uz * UW - BED_L]), space: ROOMS, rot: v => toSide(v, s) };
+        }
       }
     }
+  } else {
+    const inRoom0 = p.every(v => v >= 0 && v < 24);
+    if (inRoom0 && (f = crossT(p[2], np[2], RD_D[2], 1)) >= 0) {
+      const ip = lerp3(p, np, f);
+      if (Math.abs(ip[0] - RD_D[0]) < 0.6 && ip[1] > RD_D[1] - 0.5 && ip[1] < RD_D[1] + 2.6) {
+        const v = sub(np, RD_D), hs = home[0];
+        return { pos: fromSide([SQ_IN + BED_D + v[0], home[1] + v[1], home[2] + BED_L + v[2]], hs), space: TOWER, rot: w => fromSide(w, hs) };
+      }
+    }
+    const c = p.map(v => (Math.floor(v / 24) + 0.5) * 24);
+    const q0 = sub(p, c), q1 = sub(np, c);
+    const m0 = Math.max(...q0.map(Math.abs)), m1 = Math.max(...q1.map(Math.abs));
+    if (m0 < 11.6 && m1 >= 11.6) {
+      const ipq = lerp3(q0, q1, (11.6 - m0) / (m1 - m0));
+      const wc = roomWindow(ipq.map(v => v + Math.sign(v) * 0.001));
+      if (wc) return { pos: add([47, home[1] + 24, 0], sub(q1, wc)), space: TOWER, rot: v => v };
+    }
   }
-  return false;
-}
-function moveB(cam, np) {
-  if (portalB(cam, np)) return;
-  const C = cam.lvl === 0 ? B.C0 : B.C1;
-  const d = sub(np, C), m = B.SH + 0.15;
-  const inDoor = Math.abs(d[0]) < B.DW - 0.05 && d[1] > -B.SH && d[1] < -B.SH + B.DH && d[2] > 0;
-  if (!inDoor && Math.abs(d[0]) < m && Math.abs(d[1]) < m && Math.abs(d[2]) < m) return;      // solid cube
-  if (cam.lvl === 0) np[1] = Math.max(np[1], 0.25);
-  else {
-    np[1] = clamp(np[1], -89.7, 495);
-    np[0] = clamp(np[0], -418, 418);
-    np[2] = clamp(np[2], -1098, 89.8);                                               // only the doorway leads out
-  }
-  cam.pos = np;
+  return null;
 }
 
-// ---------- scenes ----------
-const SCENES = [
-  {
-    key: 'A', name: '끝없이 이어지는 계단', en: 'ENDLESS STAIRWELL',
-    desc: '네 겹의 나선 계단이 서로 반대로 돌며 위아래로 끝없이 이어진다. 벽 너머에는 같은 계단실이 무한히 반복된다.',
-    src: SHADERS.A, fov: 1.35, speed: 5,
-    spawn: { pos: [1.4, 3, 0.6], yaw: 0.3, pitch: -1.15, roll: 0 },
-    wrapPos: p => [wrap(p[0], 64), wrap(p[1], 1260), wrap(p[2], 64)],
-    tour(cam, dt, t) {
-      const a = t * 0.11;
-      cam.pos = [Math.cos(a) * 1.3, cam.pos[1] - dt * 1.6, Math.sin(a) * 1.3];
-      cam.yaw = -a + 1.2; cam.pitch = -0.55 + 0.35 * Math.sin(t * 0.07); cam.roll = 0;
-    }
-  },
-  {
-    key: 'B', name: '외부보다 거대한 내부', en: 'LARGER INSIDE',
-    desc: '6m짜리 정육면체의 문을 지나면 30배 큰 공간이 나온다. 그 안에도 같은 정육면체가 있고, 그 안에도… 끝이 없다.',
-    src: SHADERS.B, fov: 1.25, speed: 3,
-    spawn: { pos: [0, 1.6, 24], yaw: 0, pitch: 0.02, roll: 0, lvl: 0 },
-    move: moveB,
-    speedMul: cam => (cam.lvl > 0 ? 7 : 1),
-    tour(cam, dt) {
-      const target = cam.lvl === 0 ? [0, 1.2, 3] : [0, -88.8, 3];
-      const d = sub(target, cam.pos);
-      const dist = len(d);
-      const v = Math.max(1.2, dist * 0.22);
-      const dir = norm([d[0] * 1.5, d[1] * 1.5, Math.min(d[2], -0.5)]);
-      moveB(cam, add(cam.pos, mul(dir, v * dt)));
-      const look = norm(sub(target, cam.pos));
-      cam.yaw = Math.atan2(-look[0], -look[2]) * 0.3;
-      cam.pitch = clamp(Math.asin(clamp(look[1], -1, 1)) * 0.6 + 0.06, -0.6, 0.6); cam.roll = 0;
-    }
-  },
-  {
-    key: 'C', name: '재귀적으로 증식하는 타워', en: 'RECURSIVE TOWER',
-    desc: '모든 탑은 다리를 뻗어 절반 크기의 탑 네 개를 낳고, 그 탑들도 다시 증식한다. 구조는 숨 쉬듯 계속 자라고 비틀린다.',
-    src: SHADERS.C, fov: 1.3, speed: 9,
-    spawn: { pos: [44, 6, 44], yaw: Math.PI / 4, pitch: 0.05, roll: 0 },
-    wrapPos: p => [wrap(p[0], 180), wrap(p[1], 48 * 40), wrap(p[2], 180)],
-    tour(cam, dt, t) {
-      const a = t * 0.05 + 0.8;
-      cam.pos = [Math.sin(a) * 40, cam.pos[1] + dt * 2.2, Math.cos(a) * 40];
-      cam.yaw = a + 0.35; cam.pitch = 0.12 + 0.2 * Math.sin(t * 0.05); cam.roll = 0;
-    }
-  },
-  {
-    key: 'D', name: '공간이 뒤틀린 연결 구조', en: 'TWISTED CONNECTIONS',
-    desc: '방마다 중력의 방향이 다르고, 모든 벽에 다른 방으로 통하는 문이 있다. 창밖에는 있을 수 없는 하늘이 보이고, 멀어질수록 공간이 비틀린다.',
-    src: SHADERS.D, fov: 1.4, speed: 5,
-    spawn: { pos: [12, 12, 30], yaw: 0, pitch: 0, roll: 0 },
-    tour(cam, dt, t) {
-      cam.pos = [12, 12, cam.pos[2] - dt * 4.5];
-      cam.yaw = 0.25 * Math.sin(t * 0.13); cam.pitch = 0.15 * Math.sin(t * 0.09);
-      cam.roll = 0.5 * Math.sin(t * 0.06);
-    }
+// where in the tower are we? (for the HUD)
+function region(pos) {
+  if (P.space === ROOMS) return { key: 'rooms', name: '침실', sub: '방마다 아래가 다른 곳을 향한다' };
+  const s = sideOf(pos), c = toSide(pos, s);
+  const fl = Math.floor((pos[1] - 0.2) / FH);
+  const floorNo = fl + 1;
+  const r = Math.hypot(pos[0], pos[2]);
+  if (c[0] > SQ_IN && c[0] < SQ_OUT && Math.abs(c[2]) < SQ_IN) {
+    const uz = clamp(Math.round(c[2] / UW), -2, 2);
+    const mine = fl === SPAWN_FLOOR && s === 0 && uz === 0;
+    return { key: 'flat' + fl + '/' + s + '/' + uz, name: `${floorNo}층 ${s * 5 + uz + 3}호`, sub: mine ? '평범한 집. 우리 집이다.' : '누군가의 집. 우리 집과 똑같다.' };
   }
+  if (c[0] <= SQ_IN && r > R_ATR) return { key: 'corr' + fl, name: `${floorNo}층 복도`, sub: '복도는 계단을 둘러싸고 있다' };
+  if (r <= R_ATR) return { key: 'atrium', name: '계단', sub: '위로도 아래로도 끝이 없다' };
+  return { key: 'out', name: '바깥', sub: '모든 창문이 누군가의 집이다' };
+}
+
+const SPAWN_FLOOR = 1202;   // you live in 1203호 (floor 1203)
+const SPAWNS = [
+  { space: TOWER, pos: [SQ_IN + 7.5, SPAWN_FLOOR * FH + 1.6, 1.5], yaw: -Math.PI / 2 + 0.25, pitch: 0.02 },     // living room
+  { space: TOWER, pos: [28.2, SPAWN_FLOOR * FH + 1.6, 4], yaw: Math.PI, pitch: 0 },                           // corridor
+  { space: TOWER, pos: [24.6, SPAWN_FLOOR * FH + 1.6, 0], yaw: Math.PI / 2, pitch: -0.35 },                    // atrium bridge
+  { space: TOWER, pos: [SQ_IN + 13.1, SPAWN_FLOOR * FH + 1.6, 0], yaw: Math.PI / 2 + 0.6, pitch: 0.15 },      // balcony
+  { space: ROOMS, pos: [12, 10.6, 21], yaw: 0, pitch: 0 }
 ];
 
-// ---------- GL setup ----------
+// ---------- GL ----------
 const canvas = document.getElementById('c');
 const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance' });
-const errBox = document.getElementById('err');
-function fail(msg) { errBox.textContent = msg; errBox.style.display = 'block'; console.error(msg); }
+const $ = id => document.getElementById(id);
+function fail(msg) { $('err').textContent = msg; $('err').style.display = 'block'; console.error(msg); }
 if (!gl) { fail('WebGL2를 지원하지 않는 브라우저입니다. (WebGL2 is required)'); return; }
+const floatRT = !!gl.getExtension('EXT_color_buffer_float');
+const pext = gl.getExtension('KHR_parallel_shader_compile');
 
 const vbo = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
 
-function compileShader(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src); gl.compileShader(s);
-  return s;
+const BODY = SHADERS.header + SHADERS.worldConsts +
+  SHADERS.Tower.defs + SHADERS.D.defs +
+  SHADERS.worldDispatch + SHADERS.lighting +
+  SHADERS.Tower.shade + SHADERS.D.shade +
+  SHADERS.worldShade;
+
+function makeProgram(fsrc) {
+  const p = { prog: gl.createProgram(), ready: false, failed: false };
+  const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, SHADERS.vert); gl.compileShader(vs);
+  p.fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(p.fs, fsrc); gl.compileShader(p.fs);
+  gl.attachShader(p.prog, vs); gl.attachShader(p.prog, p.fs);
+  gl.bindAttribLocation(p.prog, 0, 'aPos');
+  gl.linkProgram(p.prog);
+  return p;
 }
-function buildProgram(scene) {
-  const fsrc = SHADERS.header + scene.src.defs + SHADERS.lighting + scene.src.shade + SHADERS.main;
-  const vs = compileShader(gl.VERTEX_SHADER, SHADERS.vert);
-  const fs = compileShader(gl.FRAGMENT_SHADER, fsrc);
-  const prog = gl.createProgram();
-  gl.attachShader(prog, vs); gl.attachShader(prog, fs);
-  gl.bindAttribLocation(prog, 0, 'aPos');
-  gl.linkProgram(prog);
-  return { prog, vs, fs, fsrc, ready: false };
-}
-const ext = gl.getExtension('KHR_parallel_shader_compile');
-function programReady(p) {
+function ready(p, names) {
   if (p.ready) return true;
-  if (ext && !gl.getProgramParameter(p.prog, ext.COMPLETION_STATUS_KHR)) return false;
-  if (!gl.getProgramParameter(p.prog, gl.LINK_STATUS)) {
-    const log = gl.getShaderInfoLog(p.fs) || gl.getProgramInfoLog(p.prog);
-    fail('Shader error:\n' + log);
-    p.failed = true; return false;
-  }
-  const u = n => gl.getUniformLocation(p.prog, n);
-  p.u = { res: u('uRes'), time: u('uTime'), cam: u('uCam'), rot: u('uRot'), fov: u('uFov'), lvl: u('uLvl'), warp: u('uWarp') };
-  p.ready = true;
-  return true;
+  if (p.failed) return false;
+  if (pext && !gl.getProgramParameter(p.prog, pext.COMPLETION_STATUS_KHR)) return false;
+  if (!gl.getProgramParameter(p.prog, gl.LINK_STATUS)) { fail('Shader error:\n' + (gl.getShaderInfoLog(p.fs) || gl.getProgramInfoLog(p.prog))); p.failed = true; return false; }
+  p.u = {}; for (const n of names) p.u[n] = gl.getUniformLocation(p.prog, n);
+  p.ready = true; return true;
 }
-const programs = SCENES.map(() => null);
-function getProgram(i) { if (!programs[i]) programs[i] = buildProgram(SCENES[i]); return programs[i]; }
+const UN = ['uRes', 'uTime', 'uCam', 'uRot', 'uFov', 'uSpace', 'uDepth', 'uWarp', 'uWarpC', 'uProbe', 'uHome'];
+const render = makeProgram(BODY + SHADERS.main);
+const probe = floatRT ? makeProgram(BODY.replace('#version 300 es', '#version 300 es\n#define PROBE') + SHADERS.probeMain) : null;
 
-// ---------- camera & input ----------
-const cam = { pos: [0, 0, 0], yaw: 0, pitch: 0, roll: 0, lvl: 0, vel: [0, 0, 0] };
-let sceneIdx = 0, tour = false, tourT = 0, speedMul = 1, warpAmt = 1;
+let probeFB = null;
+if (probe) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 8, 1, 0, gl.RGBA, gl.FLOAT, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  probeFB = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, probeFB);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+const probeBuf = new Float32Array(32);
+
+let time = 0, warpAmt = 1;
+function drawQuad() {
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+// evaluate the distance field (and its normal) at up to 8 points in a given space
+function sampleSDF(space, points, warpC) {
+  if (!probe || !ready(probe, UN)) return null;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, probeFB);
+  gl.viewport(0, 0, points.length, 1);
+  gl.useProgram(probe.prog);
+  gl.uniform1f(probe.u.uTime, time);
+  gl.uniform1i(probe.u.uSpace, space);
+  gl.uniform1i(probe.u.uDepth, 0);
+  gl.uniform1f(probe.u.uWarp, warpAmt);
+  gl.uniform3fv(probe.u.uWarpC, warpC);
+  gl.uniform3fv(probe.u.uHome, home);
+  const flat = new Float32Array(24); points.forEach((p, i) => flat.set(p, i * 3));
+  gl.uniform3fv(probe.u.uProbe, flat);
+  drawQuad();
+  gl.readPixels(0, 0, points.length, 1, gl.RGBA, gl.FLOAT, probeBuf);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return points.map((_, i) => ({ n: [probeBuf[i * 4], probeBuf[i * 4 + 1], probeBuf[i * 4 + 2]], d: probeBuf[i * 4 + 3] }));
+}
+
+// ---------- player ----------
+const P = {
+  space: TOWER, pos: [37.5, 1.6, 1.5], vel: [0, 0, 0],
+  up: [0, 1, 0], fwd0: [0, 0, -1],    // view frame (eases toward the gravity frame)
+  gUp: [0, 1, 0],                     // gravity "up" (changes room by room)
+  yaw: 0, pitch: 0, grounded: false, fly: false, noclip: false
+};
+// body: three spheres kept above step height (walls, ceilings), plus three 'leg' probes that find the floor
+const EYE = 1.6, STEP = 0.5;
+const BODYS = [{ off: 1.0, r: 0.32 }, { off: 0.52, r: 0.3 }, { off: 0.12, r: 0.22 }];
+const LEGS = [0.5, 0.3, 0.1];   // heights above the feet
+const G = 22, JUMP = 7.4, WALK = 4.6, RUN = 8.5, FLY = 8, FLYRUN = 36, TERMINAL = 55;
+
+function viewBasis() {
+  const U = P.up, F0 = P.fwd0, L0 = cross(U, F0);    // left
+  const cy = Math.cos(P.yaw), sy = Math.sin(P.yaw), cp = Math.cos(P.pitch), sp = Math.sin(P.pitch);
+  const horiz = add(mul(F0, cy), mul(L0, sy));
+  const fwd = add(mul(horiz, cp), mul(U, sp));
+  const right = norm(cross(fwd, U));
+  const up = cross(right, fwd);
+  return { fwd, right, up, horiz };
+}
+function setGravity(u) { P.gUp = u; }
+function easeViewUp(dt) {
+  const a = Math.acos(clamp(dot(P.up, P.gUp), -1, 1));
+  if (a < 1e-4) { P.up = P.gUp.slice(); return; }
+  let axis = cross(P.up, P.gUp);
+  if (len(axis) < 1e-5) axis = norm(cross(P.up, P.fwd0)); else axis = norm(axis);
+  const step = Math.min(a, a * (1 - Math.exp(-dt * 5)) + dt * 0.4);
+  P.up = norm(rotAxis(P.up, axis, step));
+  P.fwd0 = norm(rotAxis(P.fwd0, axis, step));
+  P.fwd0 = norm(sub(P.fwd0, mul(P.up, dot(P.fwd0, P.up))));
+}
+function spawn(i) {
+  const s = SPAWNS[i];
+  P.space = s.space; P.pos = s.pos.slice(); P.vel = [0, 0, 0];
+  P.up = [0, 1, 0]; P.gUp = [0, 1, 0]; P.fwd0 = [0, 0, -1]; P.yaw = s.yaw; P.pitch = s.pitch;
+  if (P.space === ROOMS) setGravity(roomUp(P.pos));
+  announce(true);
+}
+
+// ---------- input ----------
 const keys = new Set();
-
-function camBasis() {
-  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const fwd = [-Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
-  let right = norm(cross(fwd, [0, 1, 0]));
-  let up = cross(right, fwd);
-  const cr = Math.cos(cam.roll), sr = Math.sin(cam.roll);
-  const r2 = add(mul(right, cr), mul(up, sr));
-  const u2 = add(mul(up, cr), mul(right, -sr));
-  return { fwd, right: r2, up: u2 };
-}
-
-function setScene(i, resetCam = true) {
-  sceneIdx = i;
-  const s = SCENES[i];
-  if (resetCam) {
-    Object.assign(cam, JSON.parse(JSON.stringify(s.spawn)));
-    cam.lvl = s.spawn.lvl || 0; cam.vel = [0, 0, 0];
-  }
-  tourT = 0;
-  getProgram(i);
-  document.querySelectorAll('#tabs button').forEach((b, j) => b.classList.toggle('on', j === i));
-  document.getElementById('sceneKey').textContent = s.key;
-  document.getElementById('sceneName').textContent = s.name;
-  document.getElementById('sceneEn').textContent = s.en;
-  document.getElementById('sceneDesc').textContent = s.desc;
-  document.getElementById('warpRow').style.display = s.key === 'D' ? '' : 'none';
-  try { localStorage.setItem('ia.scene', String(i)); } catch (e) {}
-}
-
+let lastSpace = -1, jumpQueued = false;
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space' && !e.repeat) {
+    const now = performance.now();
+    if (now - lastSpace < 300) { P.fly = !P.fly; lastSpace = -1; P.vel = mul(P.vel, 0.3); jumpQueued = false; showMode(); }
+    else { lastSpace = now; jumpQueued = true; }
+  }
   keys.add(e.code);
-  if (/^Digit[1-4]$/.test(e.code)) setScene(+e.code[5] - 1);
-  if (e.code === 'KeyT') toggleTour();
+  if (/^Digit[1-5]$/.test(e.code)) spawn(+e.code[5] - 1);
+  if (e.code === 'KeyN') { P.noclip = !P.noclip; showMode(); }
   if (e.code === 'KeyH') document.body.classList.toggle('nohud');
-  if (e.code === 'KeyR') setScene(sceneIdx);
+  if (e.code === 'KeyR') spawn(0);
   if (e.code === 'BracketLeft') qualityMax = clamp(qualityMax - 0.1, 0.3, 1.5);
   if (e.code === 'BracketRight') qualityMax = clamp(qualityMax + 0.1, 0.3, 1.5);
-  if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
 });
 window.addEventListener('keyup', e => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
 
-function toggleTour(force) {
-  tour = force === undefined ? !tour : force;
-  tourT = 0;
-  document.getElementById('tourBtn').classList.toggle('on', tour);
-}
-
-// mouse look: pointer lock, or drag when not locked
-let dragging = false, lastX = 0, lastY = 0;
 const SENS = 0.0022;
-function look(dx, dy) {
-  if (tour) toggleTour(false);
-  cam.yaw -= dx * SENS; cam.pitch = clamp(cam.pitch - dy * SENS, -1.55, 1.55);
-}
-canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+function look(dx, dy) { P.yaw -= dx * SENS; P.pitch = clamp(P.pitch - dy * SENS, -1.5, 1.5); }
+let dragging = false, lx = 0, ly = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lx = e.clientX; ly = e.clientY; });
 window.addEventListener('mouseup', () => dragging = false);
 window.addEventListener('mousemove', e => {
   if (document.pointerLockElement === canvas) look(e.movementX, e.movementY);
-  else if (dragging) { look(e.clientX - lastX, e.clientY - lastY); lastX = e.clientX; lastY = e.clientY; }
+  else if (dragging) { look(e.clientX - lx, e.clientY - ly); lx = e.clientX; ly = e.clientY; }
 });
-canvas.addEventListener('dblclick', () => canvas.requestPointerLock && canvas.requestPointerLock());
-window.addEventListener('wheel', e => { speedMul = clamp(speedMul * Math.pow(1.0015, -e.deltaY), 0.1, 40); }, { passive: true });
+canvas.addEventListener('click', () => { if (matchMedia('(pointer:fine)').matches && canvas.requestPointerLock && $('intro').classList.contains('gone')) canvas.requestPointerLock(); });
 
-// touch: left half = move stick, right half = look
-const touch = { move: null, look: null, mx: 0, my: 0 };
+// touch: left = stick, right = look, double-tap right = jump / fly
+const touch = { move: null, look: null, mx: 0, my: 0, lastTap: 0 };
 canvas.addEventListener('touchstart', e => {
   for (const t of e.changedTouches) {
     if (t.clientX < innerWidth * 0.45 && !touch.move) touch.move = { id: t.identifier, x: t.clientX, y: t.clientY };
-    else if (!touch.look) touch.look = { id: t.identifier, x: t.clientX, y: t.clientY };
+    else if (!touch.look) {
+      touch.look = { id: t.identifier, x: t.clientX, y: t.clientY, t0: performance.now(), moved: 0 };
+    }
   }
   e.preventDefault();
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   for (const t of e.changedTouches) {
     if (touch.move && t.identifier === touch.move.id) { touch.mx = clamp((t.clientX - touch.move.x) / 60, -1, 1); touch.my = clamp((t.clientY - touch.move.y) / 60, -1, 1); }
-    if (touch.look && t.identifier === touch.look.id) { look((t.clientX - touch.look.x) * 1.6, (t.clientY - touch.look.y) * 1.6); touch.look.x = t.clientX; touch.look.y = t.clientY; }
+    if (touch.look && t.identifier === touch.look.id) {
+      const dx = t.clientX - touch.look.x, dy = t.clientY - touch.look.y;
+      touch.look.moved += Math.abs(dx) + Math.abs(dy);
+      look(dx * 1.6, dy * 1.6); touch.look.x = t.clientX; touch.look.y = t.clientY;
+    }
   }
   e.preventDefault();
 }, { passive: false });
 canvas.addEventListener('touchend', e => {
   for (const t of e.changedTouches) {
     if (touch.move && t.identifier === touch.move.id) { touch.move = null; touch.mx = touch.my = 0; }
-    if (touch.look && t.identifier === touch.look.id) touch.look = null;
+    if (touch.look && t.identifier === touch.look.id) {
+      if (touch.look.moved < 12 && performance.now() - touch.look.t0 < 250) {   // a tap = Space
+        const now = performance.now();
+        if (now - touch.lastTap < 320) { P.fly = !P.fly; touch.lastTap = 0; showMode(); } else { touch.lastTap = now; jumpQueued = true; }
+      }
+      touch.look = null;
+    }
   }
 });
 
-// ---------- UI ----------
-document.querySelectorAll('#tabs button').forEach((b, i) => b.addEventListener('click', () => setScene(i)));
-document.getElementById('tourBtn').addEventListener('click', () => toggleTour());
-document.getElementById('enter').addEventListener('click', () => {
-  document.getElementById('intro').classList.add('gone');
+// ---------- HUD ----------
+let announced = '', pendingKey = '', pendingT = 0;
+function announce(force) {
+  const rg = region(P.pos);
+  if (rg.key === announced) { pendingKey = ''; return; }
+  // only announce places you actually stay in for a moment
+  if (!force && rg.key !== pendingKey) { pendingKey = rg.key; pendingT = performance.now(); return; }
+  if (!force && performance.now() - pendingT < 500) return;
+  announced = rg.key; pendingKey = '';
+  $('placeName').textContent = rg.name;
+  $('placeSub').textContent = rg.sub;
+  const el = $('place'); el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+function showMode() {
+  $('mode').textContent = (P.noclip ? '유령' : P.fly ? '비행' : '걷기') + (P.noclip ? ' · N' : P.fly ? ' · 스페이스 두 번: 중력' : ' · 스페이스 두 번: 비행');
+  $('mode').classList.toggle('fly', P.fly || P.noclip);
+}
+$('enter').addEventListener('click', () => {
+  $('intro').classList.add('gone');
   if (matchMedia('(pointer:fine)').matches && canvas.requestPointerLock) canvas.requestPointerLock();
 });
-document.getElementById('tourStart').addEventListener('click', () => {
-  document.getElementById('intro').classList.add('gone');
-  toggleTour(true);
-});
-document.getElementById('warp').addEventListener('input', e => { warpAmt = +e.target.value; });
-const statsEl = document.getElementById('stats');
-const depthEl = document.getElementById('depth');
-const loadingEl = document.getElementById('loading');
+$('warp').addEventListener('input', e => { warpAmt = +e.target.value; });
 
-// ---------- resolution / adaptive quality ----------
-let scale = 0.7, qualityMax = 1.0, frameAcc = 0, frameN = 0;
+// ---------- physics ----------
+function warpCenterFor(space, pos) { return space === ROOMS ? pos : [12, 12, 12]; }
+
+function applyPortal(r) {
+  // directions are re-expressed in the new space (portals may turn you around)
+  P.vel = r.rot(P.vel); P.fwd0 = norm(r.rot(P.fwd0)); P.up = norm(r.rot(P.up));
+  P.space = r.space; P.pos = r.pos;
+  if (P.space === ROOMS) setGravity(roomUp(sub(P.pos, mul(P.gUp, 0.8))));
+  else setGravity([0, 1, 0]);
+  announce(true);
+}
+function wrapSpace() {}
+
+function physics(dt) {
+  const { fwd, right } = viewBasis();
+  const k = c => keys.has(c) ? 1 : 0;
+  const f = k('KeyW') + k('ArrowUp') - k('KeyS') - k('ArrowDown') - touch.my;
+  const s = k('KeyD') + k('ArrowRight') - k('KeyA') - k('ArrowLeft') + touch.mx;
+  const run = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  const U = P.gUp;
+
+  if (P.fly || P.noclip) {
+    const vert = k('Space') + k('KeyE') - k('KeyC') - k('ControlLeft') - k('KeyQ');
+    const sp = run ? FLYRUN : FLY;
+    const wish = mul(add(add(mul(fwd, f), mul(right, s)), mul(U, vert)), sp);
+    P.vel = lerp3(P.vel, wish, 1 - Math.exp(-dt * 6));
+    jumpQueued = false;
+  } else {
+    const hf = norm(sub(fwd, mul(U, dot(fwd, U))));
+    const hr = norm(sub(right, mul(U, dot(right, U))));
+    let wish = add(mul(hf, f), mul(hr, s));
+    if (len(wish) > 1) wish = norm(wish);
+    wish = mul(wish, run ? RUN : WALK);
+    const vu = dot(P.vel, U);
+    let vh = sub(P.vel, mul(U, vu));
+    vh = lerp3(vh, wish, 1 - Math.exp(-dt * (P.grounded ? 12 : 2.2)));
+    if (P.space === TOWER && !P.grounded && vu < -16) {
+      // falling past the facade: the tower draws you onto a balcony
+      const sd = sideOf(P.pos), c = toSide(P.pos, sd);
+      if (c[0] > SQ_OUT + 0.3) {
+        const uz = clamp(Math.round(c[2] / UW), -2, 2);
+        const tgt = fromSide([SQ_OUT + 0.9, c[1], uz * UW], sd);
+        const hv = sub(tgt, P.pos); hv[1] = 0;
+        const dh = len(hv);
+        if (dh > 0.3) vh = add(vh, mul(norm(hv), Math.min(dh * 1.5, 14) * dt * 1.2));
+      }
+    }
+    let nvu = Math.max(vu - G * dt, -TERMINAL);
+    if (jumpQueued && P.grounded) { nvu = JUMP; P.grounded = false; }
+    jumpQueued = false;
+    P.vel = add(vh, mul(U, nvu));
+  }
+
+  const travel = len(P.vel) * dt;
+  const n = clamp(Math.ceil(travel / 0.22), 1, 12);
+  const h = dt / n;
+  let grounded = false;
+  for (let i = 0; i < n; i++) {
+    let np = add(P.pos, mul(P.vel, h));
+    const r = camPortal(P.space, P.pos, np);
+    if (r) { applyPortal(r); continue; }
+    if (!P.noclip) {
+      const Ub = P.gUp;
+      const feet = sub(np, mul(Ub, EYE));
+      const pts = BODYS.map(b => sub(np, mul(Ub, b.off))).concat(LEGS.map(hh => add(feet, mul(Ub, hh))));
+      const res = sampleSDF(P.space, pts, warpCenterFor(P.space, np));
+      if (res) {
+        // walls and ceilings
+        for (let j = 0; j < BODYS.length; j++) {
+          const { n: nn, d } = res[j];
+          if (!(d < BODYS[j].r) || !isFinite(nn[0]) || len(nn) < 1e-6) continue;
+          const nv = norm(nn);
+          if (j === 0 && dot(nv, Ub) > 0.6) continue;            // floors are the legs' job
+          np = add(np, mul(nv, BODYS[j].r - d));
+          const vn = dot(P.vel, nv);
+          if (vn < 0) P.vel = sub(P.vel, mul(nv, vn));
+        }
+        // floor: highest walkable surface under the legs
+        let g = -1e9;
+        for (let j = 0; j < LEGS.length; j++) {
+          const { n: nn, d } = res[BODYS.length + j];
+          if (!isFinite(nn[0]) || len(nn) < 1e-6) continue;
+          if (dot(norm(nn), Ub) < 0.45) continue;
+          g = Math.max(g, LEGS[j] - d);
+        }
+        const vu = dot(P.vel, Ub);
+        const reach = P.grounded ? 0.32 : 0.02;                   // follow stairs down only when already standing
+        if (g > -reach && vu <= 0.5) {
+          grounded = true;
+          np = add(np, mul(Ub, clamp(g, -reach, STEP)));
+          if (vu < 0) P.vel = sub(P.vel, mul(Ub, vu));
+        } else if (g > 0) {
+          np = add(np, mul(Ub, Math.min(g, STEP)));                 // never sink into the floor (flying, jumping)
+          if (vu < 0) P.vel = sub(P.vel, mul(Ub, vu));
+        }
+      }
+    }
+    P.pos = np;
+    if (P.space === ROOMS) {
+      // gravity follows the room you are in, once you are properly inside it (no flicker in doorways)
+      const body = sub(P.pos, mul(P.gUp, 0.8));
+      const q = body.map(v => v - (Math.floor(v / 24) + 0.5) * 24);
+      if (12 - Math.max(...q.map(Math.abs)) > 0.9) {
+        const g = roomUp(body);
+        if (dot(g, P.gUp) < 0.99) setGravity(g);
+      }
+    }
+    wrapSpace();
+  }
+  P.grounded = grounded;
+  easeViewUp(dt);
+  announce();
+}
+
+// ---------- resolution ----------
+let scale = 0.7, qualityMax = 1.0, frameAcc = 0, frameN = 0, fpsShown = 0;
 const fixedScale = parseFloat(new URLSearchParams(location.search).get('scale'));
 if (fixedScale > 0) scale = fixedScale;
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(1, Math.round(innerWidth * dpr * scale));
-  const h = Math.max(1, Math.round(innerHeight * dpr * scale));
+  const w = Math.max(1, Math.round(innerWidth * dpr * scale)), h = Math.max(1, Math.round(innerHeight * dpr * scale));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
-// ---------- main loop ----------
-let last = performance.now(), time = 0, fpsShown = 0;
+// ---------- loop ----------
+let last = performance.now();
+const autoStep = { on: false };
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
   time += dt;
-  const s = SCENES[sceneIdx];
+  const allReady = ready(render, UN) && (!probe || ready(probe, UN));
+  if (allReady && !autoStep.on) physics(dt);
 
-  // movement
-  if (tour) { tourT += dt; s.tour(cam, dt, tourT); }
-  else {
-    const { fwd, right, up } = camBasis();
-    let w = [0, 0, 0];
-    const k = c => keys.has(c) ? 1 : 0;
-    const f = k('KeyW') + k('ArrowUp') - k('KeyS') - k('ArrowDown') - touch.my;
-    const r = k('KeyD') + k('ArrowRight') - k('KeyA') - k('ArrowLeft') + touch.mx;
-    const u = k('KeyE') + k('Space') - k('KeyQ') - k('KeyC');
-    w = add(add(mul(fwd, f), mul(right, r)), mul(up, u));
-    if (keys.has('KeyZ')) cam.roll -= dt * 0.8;
-    if (keys.has('KeyX')) cam.roll += dt * 0.8;
-    const boost = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 5 : 1;
-    const sp = s.speed * speedMul * boost * (s.speedMul ? s.speedMul(cam) : 1);
-    const target = mul(w, sp);
-    cam.vel = lerp3(cam.vel, target, 1 - Math.exp(-dt * 7));
-    const np = add(cam.pos, mul(cam.vel, dt));
-    if (s.move) s.move(cam, np); else cam.pos = np;
-  }
-  if (s.wrapPos) cam.pos = s.wrapPos(cam.pos);
-
-  // adaptive resolution
   frameAcc += dt; frameN++;
   if (frameN >= 20 && !(fixedScale > 0)) {
     const avg = frameAcc / frameN;
@@ -310,45 +477,35 @@ function frame(now) {
     fpsShown = 1 / avg; frameAcc = 0; frameN = 0;
   }
   resize();
-
-  const prog = getProgram(sceneIdx);
-  if (!programReady(prog)) { loadingEl.style.display = prog.failed ? 'none' : 'block'; return; }
-  loadingEl.style.display = 'none';
-
-  const { fwd, right, up } = camBasis();
+  if (!ready(render, UN)) { $('loading').style.display = render.failed ? 'none' : 'block'; return; }
+  $('loading').style.display = 'none';
+  draw();
+  $('stats').textContent = `${fpsShown.toFixed(0)} FPS · ${canvas.width}×${canvas.height}`;
+}
+function draw() {
+  const { fwd, right, up } = viewBasis();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.useProgram(prog.prog);
-  gl.uniform2f(prog.u.res, canvas.width, canvas.height);
-  gl.uniform1f(prog.u.time, time);
-  gl.uniform3fv(prog.u.cam, cam.pos);
-  gl.uniformMatrix3fv(prog.u.rot, false, [...right, ...up, ...mul(fwd, -1)]);
-  gl.uniform1f(prog.u.fov, s.fov);
-  gl.uniform1i(prog.u.lvl, cam.lvl | 0);
-  gl.uniform1f(prog.u.warp, warpAmt);
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-  statsEl.textContent = `${fpsShown.toFixed(0)} FPS · ${canvas.width}×${canvas.height} · 속도 ×${speedMul.toFixed(1)}`;
-  if (s.key === 'B') {
-    depthEl.style.display = 'block';
-    depthEl.innerHTML = cam.lvl === 0
-      ? '<b>깊이 0</b> · 바깥 · 축척 1:1'
-      : `<b>깊이 ${cam.lvl}</b> · 내부 · 축척 1:${cam.lvl <= 4 ? Math.pow(30, cam.lvl).toLocaleString() : '30<sup>' + cam.lvl + '</sup>'}`;
-  } else depthEl.style.display = 'none';
+  gl.useProgram(render.prog);
+  gl.uniform2f(render.u.uRes, canvas.width, canvas.height);
+  gl.uniform1f(render.u.uTime, time);
+  gl.uniform3fv(render.u.uCam, P.pos);
+  gl.uniformMatrix3fv(render.u.uRot, false, [...right, ...up, ...mul(fwd, -1)]);
+  gl.uniform1f(render.u.uFov, 1.35);
+  gl.uniform1i(render.u.uSpace, P.space);
+  gl.uniform1i(render.u.uDepth, 0);
+  gl.uniform1f(render.u.uWarp, warpAmt);
+  gl.uniform3fv(render.u.uWarpC, warpCenterFor(P.space, P.pos));
+  gl.uniform3fv(render.u.uHome, home);
+  drawQuad();
 }
 
-// expose for testing
-window.__IA = { cam, setScene, SCENES, toggleTour, get time() { return time; }, set time(v) { time = v; } };
+if (!floatRT) { P.noclip = true; console.warn('EXT_color_buffer_float unavailable: collisions disabled'); }
+// test hook
+window.__IA = { P, spawn, physics, keys, camPortal, sampleSDF, autoStep, roomUp, get time() { return time; }, set time(v) { time = v; }, press: c => window.dispatchEvent(new KeyboardEvent('keydown', { code: c })) };
 
-let start = 0;
-try { start = clamp(parseInt(localStorage.getItem('ia.scene') || '0', 10) || 0, 0, 3); } catch (e) {}
-const hashKey = location.hash.replace('#', '').toUpperCase();
-const hi = SCENES.findIndex(s => s.key === hashKey);
-if (hi >= 0) start = hi;
-setScene(start);
-// warm up the other programs in the background
-setTimeout(() => SCENES.forEach((_, i) => getProgram(i)), 1500);
+const startIdx = { HOME: 0, CORRIDOR: 1, STAIRS: 2, BALCONY: 3, ROOMS: 4 }[location.hash.replace('#', '').toUpperCase()] ?? 0;
+spawn(startIdx);
+showMode();
 requestAnimationFrame(frame);
 })();

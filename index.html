@@ -3,130 +3,91 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Impossible Architecture · 불가능한 건축</title>
-<meta name="description" content="셰이더와 코드만으로 만든, 끝없이 증식하고 공간 법칙이 뒤틀리는 웹 3D 건축 시뮬레이션">
+<title>평범한 집 · An Ordinary Home</title>
+<meta name="description" content="평범한 집인 줄 알았는데 — 셰이더와 코드만으로 만든, 끝없이 증식하고 공간 법칙이 뒤틀리는 1인칭 웹 3D 건축 체험">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  :root { --ink: #f2efe9; --dim: rgba(242,239,233,.55); --line: rgba(242,239,233,.28); --bg: rgba(12,12,14,.42); --accent: #e8b46a; }
+  :root { --ink: #f2efe9; --dim: rgba(242,239,233,.55); --line: rgba(242,239,233,.25); --bg: rgba(12,12,14,.4); --accent: #e8b46a; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: #0b0b0c; overflow: hidden; color: var(--ink);
     font-family: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; -webkit-font-smoothing: antialiased; }
-  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
   .hud { position: fixed; pointer-events: none; z-index: 2; transition: opacity .4s; }
   body.nohud .hud { opacity: 0; }
   .panel { background: var(--bg); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--line); }
 
-  #title { top: 18px; left: 18px; max-width: min(440px, calc(100vw - 36px)); padding: 14px 16px 15px; }
-  .kicker { font-size: 10px; letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
-  #title h1 { margin: 10px 0 2px; font: 700 22px/1.25 'Noto Serif KR', serif; letter-spacing: -.01em; display: flex; gap: 12px; align-items: baseline; }
-  #sceneKey { font: 500 13px 'IBM Plex Mono', monospace; color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; transform: translateY(-3px); }
-  #sceneEn { font-size: 10px; letter-spacing: .25em; color: var(--accent); }
-  #sceneDesc { margin: 10px 0 0; font: 400 13px/1.65 'Noto Serif KR', serif; color: rgba(242,239,233,.82); }
+  #cross { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: rgba(255,255,255,.7); box-shadow: 0 0 0 1px rgba(0,0,0,.3); }
 
-  #stats { top: 18px; right: 18px; font-size: 10.5px; letter-spacing: .08em; color: var(--dim); padding: 7px 10px; }
-  #depth { top: 52px; right: 18px; font-size: 12px; padding: 8px 12px; display: none; letter-spacing: .04em; }
-  #depth b { color: var(--accent); font-weight: 500; }
+  #place { left: 50%; top: 16%; transform: translateX(-50%); text-align: center; opacity: 0; white-space: nowrap; }
+  #place.show { animation: place 5.5s ease forwards; }
+  @keyframes place { 0% { opacity: 0; letter-spacing: .3em; } 15% { opacity: 1; letter-spacing: .12em; } 70% { opacity: 1; } 100% { opacity: 0; } }
+  #placeName { font: 700 clamp(30px, 5vw, 48px)/1.1 'Noto Serif KR', serif; text-shadow: 0 2px 24px rgba(0,0,0,.55); }
+  #placeSub { margin-top: 10px; font: 400 14px 'Noto Serif KR', serif; color: rgba(242,239,233,.85); text-shadow: 0 1px 12px rgba(0,0,0,.7); letter-spacing: .04em; }
 
-  #tabs { bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; pointer-events: auto; }
-  #tabs button, #tourBtn { pointer-events: auto; font: inherit; color: var(--ink); background: transparent; border: 0; border-right: 1px solid var(--line);
-    padding: 10px 14px; cursor: pointer; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 112px; transition: background .2s; }
-  #tabs button:last-child { border-right: 0; }
-  #tabs button b { font-weight: 500; font-size: 12px; color: var(--dim); }
-  #tabs button span { font: 400 12px 'Noto Serif KR', serif; white-space: nowrap; }
-  #tabs button:hover { background: rgba(255,255,255,.07); }
-  #tabs button.on { background: rgba(232,180,106,.16); }
-  #tabs button.on b { color: var(--accent); }
-  #tourBtn { min-width: 0; align-items: center; justify-content: center; font-size: 11px; letter-spacing: .1em; }
-  #tourBtn.on { color: #111; background: var(--accent); }
+  #mode { left: 50%; bottom: 22px; transform: translateX(-50%); font-size: 11px; letter-spacing: .12em; padding: 7px 12px; color: var(--dim); }
+  #mode.fly { color: #111; background: var(--accent); border-color: var(--accent); }
+  #stats { top: 14px; right: 14px; font-size: 10px; letter-spacing: .08em; color: var(--dim); }
 
-  #help { bottom: 18px; left: 18px; font-size: 10.5px; line-height: 1.85; color: var(--dim); padding: 10px 13px; pointer-events: auto; }
+  #help { bottom: 18px; left: 18px; font-size: 10.5px; line-height: 1.9; color: var(--dim); padding: 10px 13px; pointer-events: auto; }
   #help kbd { font: inherit; color: var(--ink); border: 1px solid var(--line); padding: 0 4px; margin-right: 2px; }
-  #warpRow { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
-  #warpRow input { width: 110px; accent-color: var(--accent); }
+  #warpRow { margin-top: 4px; display: flex; align-items: center; gap: 8px; }
+  #warpRow input { width: 100px; accent-color: var(--accent); }
 
   #loading { top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 11px; letter-spacing: .25em; padding: 12px 18px; display: none; }
   #err { position: fixed; z-index: 10; top: 20px; left: 50%; transform: translateX(-50%); max-width: 90vw; max-height: 60vh; overflow: auto;
     white-space: pre-wrap; background: #300; color: #fcc; font-size: 11px; padding: 12px; display: none; }
 
-  #intro { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(10,10,12,.55), rgba(10,10,12,.88));
-    transition: opacity .6s; padding: 24px; }
+  #intro { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px;
+    background: radial-gradient(ellipse at center, rgba(14,12,10,.5), rgba(10,9,8,.9)); transition: opacity .8s; }
   #intro.gone { opacity: 0; pointer-events: none; }
-  .introCard { max-width: 620px; text-align: left; }
-  .introCard h2 { font: 700 clamp(34px, 6vw, 58px)/1.08 'Noto Serif KR', serif; margin: 14px 0 18px; letter-spacing: -.02em; }
-  .introCard p { font: 400 14.5px/1.8 'Noto Serif KR', serif; color: rgba(242,239,233,.8); margin: 0 0 22px; }
-  .introCard ol { list-style: none; padding: 0; margin: 0 0 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; font-size: 12px; color: var(--dim); }
-  .introCard ol b { color: var(--accent); font-weight: 500; margin-right: 8px; }
-  .introCard ol span { font-family: 'Noto Serif KR', serif; color: var(--ink); }
-  .btns { display: flex; gap: 10px; flex-wrap: wrap; }
-  .btns button { font: 500 12px 'IBM Plex Mono', monospace; letter-spacing: .14em; padding: 13px 20px; cursor: pointer; border: 1px solid var(--ink); background: var(--ink); color: #111; }
-  .btns button.ghost { background: transparent; color: var(--ink); }
-  .btns button:hover { filter: brightness(1.1); }
+  .card { max-width: 560px; }
+  .kicker { font-size: 10px; letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
+  .card h1 { font: 700 clamp(40px, 7vw, 68px)/1.05 'Noto Serif KR', serif; margin: 14px 0 18px; letter-spacing: -.02em; }
+  .card p { font: 400 15px/1.85 'Noto Serif KR', serif; color: rgba(242,239,233,.82); margin: 0 0 22px; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 12px; color: var(--dim); margin: 0 0 28px; }
+  .keys b { color: var(--ink); font-weight: 500; }
+  #enter { font: 500 12px 'IBM Plex Mono', monospace; letter-spacing: .16em; padding: 14px 24px; cursor: pointer; border: 1px solid var(--ink); background: var(--ink); color: #111; }
+  #enter:hover { filter: brightness(1.1); }
 
-  @media (max-width: 760px) {
-    #title { padding: 10px 12px; } #title h1 { font-size: 17px; } #sceneDesc { font-size: 12px; }
-    #help { display: none; }
-    #tabs { left: 8px; right: 8px; transform: none; bottom: 10px; }
-    #tabs button { min-width: 0; flex: 1; padding: 8px 6px; } #tabs button span { font-size: 10.5px; white-space: normal; }
-    #stats { top: auto; bottom: 74px; right: 8px; }
-    #depth { top: auto; bottom: 104px; right: 8px; }
-    .introCard ol { grid-template-columns: 1fr; }
-  }
+  @media (max-width: 760px) { #help { display: none; } #placeSub { white-space: normal; max-width: 86vw; } }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 
-<header id="title" class="hud panel">
-  <div class="kicker">Impossible Architecture · 불가능한 건축</div>
-  <h1><span id="sceneKey">A</span><span id="sceneName"></span></h1>
-  <div id="sceneEn"></div>
-  <p id="sceneDesc"></p>
-</header>
-<div id="stats" class="hud panel"></div>
-<div id="depth" class="hud panel"></div>
-<div id="loading" class="hud panel">COMPILING SPACE…</div>
-
-<nav id="tabs" class="hud panel">
-  <button data-i="0"><b>A</b><span>끝없는 계단</span></button>
-  <button data-i="1"><b>B</b><span>거대한 내부</span></button>
-  <button data-i="2"><b>C</b><span>증식하는 타워</span></button>
-  <button data-i="3"><b>D</b><span>뒤틀린 연결</span></button>
-  <button id="tourBtn" title="자동 비행 (T)">TOUR</button>
-</nav>
-
+<div id="cross" class="hud"></div>
+<div id="place" class="hud"><div id="placeName"></div><div id="placeSub"></div></div>
+<div id="mode" class="hud panel"></div>
+<div id="stats" class="hud"></div>
+<div id="loading" class="hud panel">BUILDING THE HOUSE…</div>
 <aside id="help" class="hud panel">
-  <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 &nbsp; <kbd>E</kbd>/<kbd>Q</kbd> 상승·하강</div>
-  <div>드래그 / 더블클릭(마우스 잠금) 시점 &nbsp; <kbd>Shift</kbd> 가속</div>
-  <div>휠 속도 &nbsp; <kbd>Z</kbd>/<kbd>X</kbd> 기울기 &nbsp; <kbd>1</kbd>–<kbd>4</kbd> 공간 전환</div>
-  <div><kbd>T</kbd> 자동 비행 &nbsp; <kbd>R</kbd> 처음 위치 &nbsp; <kbd>H</kbd> UI 숨김 &nbsp; <kbd>[</kbd><kbd>]</kbd> 화질</div>
-  <div id="warpRow"><span>뒤틀림</span><input id="warp" type="range" min="0" max="3" step="0.05" value="1"></div>
+  <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 걷기 · <kbd>Shift</kbd> 달리기 · 마우스 시점</div>
+  <div><kbd>Space</kbd> 점프 · <kbd>Space</kbd>×2 비행 ↔ 중력</div>
+  <div>비행 중 <kbd>Space</kbd>/<kbd>C</kbd> 상승·하강 · <kbd>R</kbd> 우리 집으로 · <kbd>H</kbd> UI</div>
+  <div id="warpRow"><span>공간 뒤틀림</span><input id="warp" type="range" min="0" max="3" step="0.05" value="1"></div>
 </aside>
 
 <div id="intro">
-  <div class="introCard">
-    <div class="kicker">A raymarched study in endless space · 셰이더만으로 지은 건축</div>
-    <h2>불가능한<br>건축</h2>
-    <p>메시도, 텍스처도, 라이브러리도 없습니다. 모든 계단과 기둥과 방은 픽셀마다 실시간으로 계산되는 거리 함수입니다. 끝없이 증식하고, 안이 바깥보다 크고, 공간이 스스로 비틀리는 네 개의 건축물을 자유롭게 탐험해 보세요.</p>
-    <ol>
-      <li><b>A</b><span>끝없이 이어지는 계단</span></li>
-      <li><b>B</b><span>외부보다 거대한 내부</span></li>
-      <li><b>C</b><span>재귀적으로 증식하는 타워</span></li>
-      <li><b>D</b><span>공간이 뒤틀린 연결 구조</span></li>
-    </ol>
-    <div class="btns">
-      <button id="enter">ENTER · 들어가기</button>
-      <button id="tourStart" class="ghost">AUTO TOUR · 자동 비행</button>
+  <div class="card">
+    <div class="kicker">An ordinary home · 셰이더로만 지은 집</div>
+    <h1>평범한 집</h1>
+    <p>1203호. 거실이 있고, 부엌이 있고, 발코니가 있고, 침실 문이 있다. 현관을 나서면 복도, 복도 너머엔 계단. 창밖으로는 이웃집들이 보인다. 아주 평범한 아파트다. 아마도.</p>
+    <div class="keys">
+      <b>W A S D</b><span>걷기 · Shift 달리기</span>
+      <b>마우스</b><span>둘러보기 (클릭하면 마우스 잠금)</span>
+      <b>Space</b><span>점프</span>
+      <b>Space ×2</b><span>날기 / 다시 중력 받기</span>
     </div>
+    <button id="enter">ENTER · 들어가기</button>
   </div>
 </div>
 <div id="err"></div>
 
 <script src="js/shaders/common.js"></script>
-<script src="js/shaders/sceneA.js"></script>
-<script src="js/shaders/sceneB.js"></script>
-<script src="js/shaders/sceneC.js"></script>
+<script src="js/shaders/world.js"></script>
+<script src="js/shaders/sceneTower.js"></script>
 <script src="js/shaders/sceneD.js"></script>
 <script src="js/main.js"></script>
 </body>

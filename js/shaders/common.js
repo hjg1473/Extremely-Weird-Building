@@ -14,14 +14,17 @@ uniform float uTime;
 uniform vec3  uCam;
 uniform mat3  uRot;
 uniform float uFov;
-uniform int   uLvl;
+uniform int   uSpace;
+uniform int   uDepth;
 uniform float uWarp;
+uniform vec3  uWarpC;
 out vec4 outColor;
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
 
-int gLvl = 0;
+int gSpace = 0;
+int gDepth = 0;
 
 float hash11(float p){ p = fract(p*.1031); p *= p + 33.33; p *= p + p; return fract(p); }
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y)*p3.z); }
@@ -118,31 +121,36 @@ void main(){
   float fl = 0.5/tan(uFov*0.5);
   vec3 rd = normalize(uRot*vec3(uv, -fl));
   vec3 p = uCam;
-  gLvl = uLvl;
+  gSpace = uSpace; gDepth = uDepth;
   float unit = 1.;     // camera units per local unit (changes when passing through portals)
   float tC = 0.;       // distance in camera units
   float tL = 0.;       // distance in the current space segment (local units)
   float T = 1.;        // fog transmittance
-  vec3 acc = vec3(0.); // accumulated fog light
+  vec3 acc = vec3(0.); // fog light accumulated in spaces the ray has left
   vec2 h = vec2(1e9, 0.);
   bool hit = false;
   float pix = 1.0/(uRes.y*fl);
   for(int i = 0; i < MAXSTEPS; i++){
     h = map(p);
     float eps = (0.0008 + tC*pix*0.7)/unit;
-    if(h.x < eps){ hit = true; break; }
-    float s = h.x*STEPK;
-#ifdef PORTALS
+    int oldS = gSpace;
+    float k;
+    if(h.x < eps){
+      if(surfPortal(p, rd, k)){
+        float a = 1. - exp(-tL*fogDen(oldS));
+        acc += T*a*fogCol(rd, oldS); T *= 1. - a; tL = 0.; unit /= k;
+        continue;
+      }
+      hit = true; break;
+    }
+    float s = h.x*stepK();
     float tr;
-    int oldL = gLvl;
-    if(portal(p, p + rd*s, rd, tr)){
+    if(portal(p, p + rd*s, rd, tr, k)){
       tL += tr; tC += tr*unit;
-      float a = 1. - exp(-tL*fogDen(oldL));
-      acc += T*a*fogCol(rd, oldL); T *= 1. - a; tL = 0.;
-      unit *= (gLvl > oldL) ? (1./KSC) : KSC;
+      float a = 1. - exp(-tL*fogDen(oldS));
+      acc += T*a*fogCol(rd, oldS); T *= 1. - a; tL = 0.; unit /= k;
       continue;
     }
-#endif
     p += rd*s; tL += s; tC += s*unit;
     if(tC > MAXD) break;
   }
@@ -151,8 +159,8 @@ void main(){
     float e = max(0.0006, tC*pix*0.5)/unit;
     vec3 n = calcNormal(p, e);
     col = shade(p, n, rd, h.y, tL);
-    float a = 1. - exp(-tL*fogDen(gLvl));
-    col = mix(col, fogCol(rd, gLvl), a);
+    float a = 1. - exp(-tL*fogDen(gSpace));
+    col = mix(col, fogCol(rd, gSpace), a);
   } else {
     col = sky(rd);
   }
@@ -165,5 +173,18 @@ void main(){
   col *= 0.55 + 0.45*pow(16.*q.x*q.y*(1. - q.x)*(1. - q.y), 0.18);
   col += (hash12(gl_FragCoord.xy + fract(uTime*7.3)*311.) - 0.5)*0.035;
   outColor = vec4(col, 1.);
+}
+`;
+
+// collision probes: the player's body spheres are evaluated against the exact same map()
+SHADERS.probeMain = `
+uniform vec3 uProbe[8];
+void main(){
+  int i = int(gl_FragCoord.x);
+  gSpace = uSpace; gDepth = uDepth;
+  vec3 p = uProbe[i];
+  float d = map(p).x;
+  vec3 n = calcNormal(p, 0.004);
+  outColor = vec4(n, d);
 }
 `;
