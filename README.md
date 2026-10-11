@@ -3,7 +3,7 @@
 하나의 거대한 건축물이 끝없이 증식하고, 내부와 외부의 공간 법칙이 뒤틀리는 **웹 기반 3D 건축 시뮬레이션**.
 메시·텍스처·라이브러리 없이 **WebGL2 프래그먼트 셰이더(레이마칭 + 부호 거리 함수)** 만으로 모든 계단과 기둥과 방을 픽셀마다 실시간 계산합니다.
 
-▶ **실행:** `index.html`을 브라우저로 열거나, GitHub Pages(https://hjg1473.github.io/Extremely-Weird-Building/)에서 바로 실행. 빌드 과정 없음.
+▶ **실행:** `index.html`을 브라우저로 열거나, GitHub Pages(저장소 Settings → Pages → `main` / root 선택 후 https://hjg1473.github.io/Extremely-Weird-Building/)에서 실행. 빌드 과정 없음.
 URL 뒤에 `#A` ~ `#D`를 붙이면 해당 공간으로 바로 들어갑니다.
 
 | B. 외부보다 거대한 내부 — 문 너머 | B. 내부의 대전당 |
