@@ -129,6 +129,12 @@ const $ = id => document.getElementById(id);
 function fail(msg) { $('err').textContent = msg; $('err').style.display = 'block'; console.error(msg); }
 if (!gl) { fail('WebGL2를 지원하지 않는 브라우저입니다. (WebGL2 is required)'); return; }
 const floatRT = !!gl.getExtension('EXT_color_buffer_float');
+// if the GPU gives up on a frame (driver timeout), say so and come back at a lower resolution
+canvas.addEventListener('webglcontextlost', e => {
+  e.preventDefault();
+  try { localStorage.setItem('ia.lost', '1'); } catch (er) {}
+  fail('GPU가 한 프레임을 끝내지 못해 연결이 끊어졌습니다. 새로고침하면 낮은 해상도로 다시 시작합니다.\n(The GPU timed out. Reload to restart at a lower resolution.)');
+});
 const pext = gl.getExtension('KHR_parallel_shader_compile');
 
 const vbo = gl.createBuffer();
@@ -450,17 +456,20 @@ function physics(dt) {
 }
 
 // ---------- resolution ----------
-let scale = 0.7, qualityMax = 1.0, frameAcc = 0, frameN = 0, fpsShown = 0;
+let lowStart = false;
+try { lowStart = localStorage.getItem('ia.lost') === '1'; } catch (e) {}
+let scale = lowStart ? 0.3 : 0.45, qualityMax = 1.0, frameAcc = 0, frameN = 0, fpsShown = 0;
 const fixedScale = parseFloat(new URLSearchParams(location.search).get('scale'));
 if (fixedScale > 0) scale = fixedScale;
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   const w = Math.max(1, Math.round(innerWidth * dpr * scale)), h = Math.max(1, Math.round(innerHeight * dpr * scale));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
 }
 
 // ---------- loop ----------
 let last = performance.now();
+const t0 = performance.now();
 const autoStep = { on: false };
 function frame(now) {
   requestAnimationFrame(frame);
@@ -477,8 +486,13 @@ function frame(now) {
     fpsShown = 1 / avg; frameAcc = 0; frameN = 0;
   }
   resize();
-  if (!ready(render, UN)) { $('loading').style.display = render.failed ? 'none' : 'block'; return; }
-  $('loading').style.display = 'none';
+  if (!ready(render, UN)) {
+    $('loading').style.display = render.failed ? 'none' : 'block';
+    $('loadingT').textContent = Math.floor((performance.now() - t0) / 1000) + 's';
+    return;
+  }
+  if ($('loading').style.display !== 'none') { $('loading').style.display = 'none'; console.log('[house] shaders ready in', ((performance.now() - t0) / 1000).toFixed(1), 's'); }
+  if (lowStart && fpsShown > 45) { try { localStorage.removeItem('ia.lost'); } catch (e) {} lowStart = false; }
   draw();
   $('stats').textContent = `${fpsShown.toFixed(0)} FPS · ${canvas.width}×${canvas.height}`;
 }

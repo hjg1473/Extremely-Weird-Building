@@ -35,14 +35,15 @@
   #warpRow { margin-top: 4px; display: flex; align-items: center; gap: 8px; }
   #warpRow input { width: 100px; accent-color: var(--accent); }
 
-  #loading { top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 11px; letter-spacing: .25em; padding: 12px 18px; display: none; }
+  #loading { position: fixed; z-index: 6; bottom: 28px; left: 50%; transform: translateX(-50%); font-size: 11px; letter-spacing: .12em; padding: 10px 16px; display: none; text-align: center; pointer-events: none; }
+  #loading small { display: block; margin-top: 4px; color: var(--dim); letter-spacing: .02em; }
   #err { position: fixed; z-index: 10; top: 20px; left: 50%; transform: translateX(-50%); max-width: 90vw; max-height: 60vh; overflow: auto;
     white-space: pre-wrap; background: #300; color: #fcc; font-size: 11px; padding: 12px; display: none; }
 
-  #intro { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px;
+  #intro { position: fixed; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 24px;
     background: radial-gradient(ellipse at center, rgba(14,12,10,.5), rgba(10,9,8,.9)); transition: opacity .8s; }
   #intro.gone { opacity: 0; pointer-events: none; }
-  .card { max-width: 560px; }
+  .card { width: 100%; max-width: 560px; }
   .kicker { font-size: 10px; letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
   .card h1 { font: 700 clamp(40px, 7vw, 68px)/1.05 'Noto Serif KR', serif; margin: 14px 0 18px; letter-spacing: -.02em; }
   .card p { font: 400 15px/1.85 'Noto Serif KR', serif; color: rgba(242,239,233,.82); margin: 0 0 22px; }
@@ -61,7 +62,7 @@
 <div id="place" class="hud"><div id="placeName"></div><div id="placeSub"></div></div>
 <div id="mode" class="hud panel"></div>
 <div id="stats" class="hud"></div>
-<div id="loading" class="hud panel">BUILDING THE HOUSE…</div>
+<div id="loading" class="panel">집을 짓는 중… <span id="loadingT"></span><small>처음 열 때는 셰이더 컴파일에 수십 초가 걸릴 수 있어요</small></div>
 <aside id="help" class="hud panel">
   <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 걷기 · <kbd>Shift</kbd> 달리기 · 마우스 시점</div>
   <div><kbd>Space</kbd> 점프 · <kbd>Space</kbd>×2 비행 ↔ 중력</div>

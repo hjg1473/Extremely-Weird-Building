@@ -28,7 +28,7 @@ vec2 mapAtrium(vec3 p){
   // a bridge from the outer stair to the corridor on every floor (each floor at its own angle)
   float n0 = floor(p.y/FH);
   float cutR = 1e9, cutP = 1e9;
-  for(int j = 0; j < 2; j++){
+  for(int j = ZERO; j < 2; j++){
     float n = n0 + float(j);
     vec2 bq = p.xz*rot(-TAU*n/5.);
     float ky = p.y - n*FH;
@@ -37,7 +37,7 @@ vec2 mapAtrium(vec3 p){
     cutR = min(cutR, sdBox(vec3(bq.x - 22.25, ky - 1.1, bq.y), vec3(2.75, 1.15, 0.85)));
     cutP = min(cutP, sdBox(vec3(bq.x - 26.6, ky - 1.1, bq.y), vec3(1.6, 1.15, 0.85)));
   }
-  for(int k = 0; k < 4; k++){
+  for(int k = ZERO; k < 4; k++){
     float fk = float(k);
     float r0 = 2.6 + fk*5.2;
     float r1 = r0 + 3.0 + fk*0.4;
@@ -111,7 +111,7 @@ vec2 mapFloors(vec3 p){
 
   if(abs(c.z) < SQ_IN){
     // balconies (this floor and the one above)
-    for(int j = 0; j < 2; j++){
+    for(int j = ZERO; j < 2; j++){
       float f2 = fy - float(j)*FH;
       float b = sdBox(vec3(d - 12.8, f2 + 0.125, l), vec3(0.8, 0.125, 5.7));
       res = opU(res, vec2(b, 40.));
@@ -164,7 +164,7 @@ vec2 mapKids(vec3 pw){
   vec2 res = vec2(1e9, 0.);
   gWin = 0.;
   const vec2 CELL = vec2(UW/TS, FH/TS);    // one apartment in tower units
-  for(int i = 0; i < 5; i++){
+  for(int i = ZERO; i < 5; i++){
     float fi = float(i);
     float w = i == 0 ? 9. : 7.;
     float H = 26.;
@@ -228,7 +228,7 @@ vec3 fogColT(vec3 rd){
 shade: `
 vec3 unitTint(float h){ return mix(vec3(0.66, 0.58, 0.44), 0.55 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.35); }
 
-vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t){
+vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   vec3 alb = vec3(0.7); float spec = 0.05; vec3 emi = vec3(0.);
   int s = sideOf(p);
   vec3 c = toSide(p, s);
@@ -293,8 +293,6 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t){
   else if(m < 46.5){ alb = vec3(0.12); spec = 0.5; }
   else return vec3(1.3, 1.25, 1.1);
 
-  float ao = calcAO(p, n, 0.7);
-  float sh = softShadow(p + n*0.03, SUN_T, 0.04, 60., 10.);
   float dif = clamp(dot(n, SUN_T), 0., 1.);
   vec3 lin = dif*sh*vec3(1.5, 1.32, 1.1)*1.6;
   float sky = (inUnit || inCorr) ? 0.25 : (m < 9.5 ? 1.6 : 1.);
@@ -304,8 +302,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t){
     if(lampOn){
       vec3 L = fromSide(vec3(SQ_IN + 6., fl*FH + 3.0, uz*UW), s);
       vec3 lv = L - p; float ld = length(lv); lv /= ld;
-      float lsh = softShadow(p + n*0.02, lv, 0.03, ld - 0.2, 12.);
-      lin += clamp(dot(n, lv), 0., 1.)*lsh*12./(ld*ld + 3.)*vec3(1.3, 1.0, 0.7);
+      lin += clamp(dot(n, lv), 0., 1.)*(0.35 + 0.65*ao)*12./(ld*ld + 3.)*vec3(1.3, 1.0, 0.7);
     }
     lin += ao*vec3(0.16, 0.14, 0.12);
     // daylight through the facade

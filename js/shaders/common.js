@@ -23,6 +23,9 @@ out vec4 outColor;
 #define PI  3.14159265359
 #define TAU 6.28318530718
 
+// ZERO is 0 at runtime, but the compiler cannot prove it: keeps loops from being unrolled and
+// map() from being inlined many times (critical for compile time under ANGLE/D3D on Windows)
+#define ZERO (min(int(uTime), 0))
 int gSpace = 0;
 int gDepth = 0;
 
@@ -90,13 +93,16 @@ SHADERS.lighting = `
 #define SHSTEPS 32
 #endif
 vec3 calcNormal(vec3 p, float e){
-  const vec2 k = vec2(1, -1);
-  return normalize(k.xyy*map(p + k.xyy*e).x + k.yyx*map(p + k.yyx*e).x +
-                   k.yxy*map(p + k.yxy*e).x + k.xxx*map(p + k.xxx*e).x);
+  vec3 n = vec3(0.);
+  for(int i = ZERO; i < 4; i++){
+    vec3 k = 0.5773*(2.*vec3(float(((i + 3) >> 1) & 1), float((i >> 1) & 1), float(i & 1)) - 1.);
+    n += k*map(p + e*k).x;
+  }
+  return normalize(n);
 }
 float calcAO(vec3 p, vec3 n, float sc){
   float o = 0., w = 1.;
-  for(int i = 0; i < 5; i++){
+  for(int i = ZERO; i < 5; i++){
     float h = sc*(0.02 + 0.16*float(i));
     float d = map(p + n*h).x;
     o += (h - d)*w; w *= 0.7;
@@ -105,7 +111,7 @@ float calcAO(vec3 p, vec3 n, float sc){
 }
 float softShadow(vec3 ro, vec3 rd, float mint, float maxt, float k){
   float res = 1., t = mint;
-  for(int i = 0; i < SHSTEPS; i++){
+  for(int i = ZERO; i < SHSTEPS; i++){
     float h = mapS(ro + rd*t);
     res = min(res, k*h/t);
     t += clamp(h, mint*0.5, maxt/10.);
@@ -130,7 +136,7 @@ void main(){
   vec2 h = vec2(1e9, 0.);
   bool hit = false;
   float pix = 1.0/(uRes.y*fl);
-  for(int i = 0; i < MAXSTEPS; i++){
+  for(int i = ZERO; i < MAXSTEPS; i++){
     h = map(p);
     float eps = (0.0008 + tC*pix*0.7)/unit;
     int oldS = gSpace;
@@ -158,7 +164,12 @@ void main(){
   if(hit){
     float e = max(0.0006, tC*pix*0.5)/unit;
     vec3 n = calcNormal(p, e);
-    col = shade(p, n, rd, h.y, tL);
+    // one AO and one shadow evaluation for every space (each call site would inline the whole world)
+    float aoS, shT;
+    vec3 Ld = lightDir(p, aoS, shT);
+    float ao = calcAO(p, n, aoS);
+    float sh = softShadow(p + n*0.03, Ld, 0.04, shT, 10.);
+    col = shade(p, n, rd, h.y, tL, ao, sh);
     float a = 1. - exp(-tL*fogDen(gSpace));
     col = mix(col, fogCol(rd, gSpace), a);
   } else {

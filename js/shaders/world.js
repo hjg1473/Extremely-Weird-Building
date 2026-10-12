@@ -9,9 +9,9 @@
 // js/main.js mirrors these rules for the player.
 
 SHADERS.worldConsts = `
-#define MAXSTEPS 240
+#define MAXSTEPS 200
 #define MAXD 20000.
-#define SHSTEPS 28
+#define SHSTEPS 24
 const int SP_TOWER = 0, SP_ROOMS = 1;
 const float TS = 4.6666667;                // apartment-tower metres per scene-C unit (42 m / 9)
 const vec3  RD_D = vec3(12., 9., 24.);     // room 0's door (plane z = 24)
@@ -29,8 +29,16 @@ vec3 sky(vec3 rd){ return fogCol(rd, gSpace); }
 `;
 
 SHADERS.worldShade = `
-vec3 shade(vec3 p, vec3 n, vec3 rd, float m, float t){
-  return gSpace == SP_TOWER ? shadeTower(p, n, rd, m, t) : shadeD(p, n, rd, m, t);
+vec3 lightDir(vec3 p, out float aoS, out float maxt){
+  if(gSpace == SP_TOWER){ aoS = 0.7; maxt = 60.; return SUN_T; }
+  float lip;
+  vec3 w = warpD(p, lip);
+  vec3 lp = (floor(w/S_D) + .5)*S_D - w;
+  aoS = 1.3; maxt = max(length(lp) - 0.2, 0.1);
+  return normalize(lp);
+}
+vec3 shade(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
+  return gSpace == SP_TOWER ? shadeTower(p, n, rd, m, t, ao, sh) : shadeD(p, n, rd, m, t, ao, sh);
 }
 float crossT(float a, float b, float v, float dir){
   if(dir < 0. ? (a > v && b <= v) : (a < v && b >= v)) return (a - v)/(a - b);

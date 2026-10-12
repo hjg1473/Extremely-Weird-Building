@@ -111,7 +111,7 @@ vec3 painting(vec2 uv, float s){
 }
 `,
 shade: `
-vec3 shadeD(vec3 p, vec3 n, vec3 rd, float m, float t){
+vec3 shadeD(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   float lip;
   vec3 w = warpD(p, lip);
   vec3 id = floor(w/S_D);
@@ -152,8 +152,6 @@ vec3 shadeD(vec3 p, vec3 n, vec3 rd, float m, float t){
   vec3 lp = (id + .5)*S_D - w;         // room-centre light (in warped space)
   float ld = length(lp);
   vec3 Ld = lp/ld;
-  float ao = calcAO(p, n, 1.3);
-  float sh = softShadow(p + n*0.03, Ld, 0.05, ld, 8.);
   float att = 90./(ld*ld + 20.);
   vec3 lin = clamp(dot(n, Ld), 0., 1.)*sh*att*vec3(1.0, 0.72, 0.45);
   lin += ao*vec3(0.20, 0.21, 0.24)*(0.7 + 0.3*n.y);
