@@ -146,13 +146,13 @@ vec3 shadeD(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
     if(r.x < -10.7 && abs(r.y) < 1.75 && abs(abs(r.z) - 7.) < 1.25) cu = vec2((abs(r.z) - 7.)/1.25*sign(r.z), r.y/1.75);
     if(r.z < -10.7 && abs(r.y) < 1.75 && abs(abs(r.x) - 7.) < 1.25) cu = vec2((abs(r.x) - 7.)/1.25*sign(r.x), r.y/1.75);
     if(cu.x < 5.) return painting(cu, hash13(id + sign(r.x + r.z)*0.37))*0.9;
-  } else if(m < 6.5){ emi = vec3(1.0, 0.75, 0.45)*4.; alb = vec3(0.); }
+  } else if(m < 6.5){ emi = vec3(1.0, 0.75, 0.45)*4.*uSupply; alb = vec3(0.); }
   else { alb = vec3(0.66, 0.58, 0.45); }
 
   vec3 lp = (id + .5)*S_D - w;         // room-centre light (in warped space)
   float ld = length(lp);
   vec3 Ld = lp/ld;
-  float att = 90./(ld*ld + 20.);
+  float att = 90./(ld*ld + 20.)*uSupply;
   vec3 lin = clamp(dot(n, Ld), 0., 1.)*sh*att*vec3(1.0, 0.72, 0.45);
   lin += ao*vec3(0.20, 0.21, 0.24)*(0.7 + 0.3*n.y);
   lin += ao*0.12*vec3(0.5, 0.6, 0.8)*max(dot(n, normalize(vec3(0.4, 0.5, -0.6))), 0.);

@@ -18,10 +18,11 @@ const vec3  RD_D = vec3(12., 9., 24.);     // room 0's door (plane z = 24)
 const float BED_D = 2.6, BED_L = -4.1;    // bedroom door inside a flat (depth from corridor wall, lateral plane)
 uniform vec3 uHome;
 uniform float uDip;                         // building-wide brown-out (0..1), driven from JS                         // flat you entered the rooms from: (side, floor base y, unit centre z)
+uniform float uSupply;                      // zero during outage, 0..1 during staggered restart
 `;
 
 SHADERS.worldDispatch = `
-vec2 map(vec3 p){ return gSpace == SP_TOWER ? mapTower(p) : mapD(p); }
+vec2 map(vec3 p){ return gSpace == SP_TOWER ? withGallery(p,mapTower(p)) : mapD(p); }
 float mapS(vec3 p){ return map(p).x; }
 float stepK(){ return gSpace == SP_TOWER ? 0.75 : 0.8; }
 float fogDen(int s){ return s == SP_TOWER ? 0.0011 : 0.017; }
@@ -71,7 +72,7 @@ bool portal(inout vec3 p, vec3 np, inout vec3 rd, out float tr, out float k){
       if(f >= 0.){
         ip = mix(c0, c1, f);
         float fl = floor(ip.y/FH), fy = ip.y - fl*FH;
-        if(abs(ip.x - SQ_IN - BED_D) < 0.6 && fy > 0. && fy < 2.2 && !isLounge(fl)){
+        if(abs(ip.x - SQ_IN - BED_D) < 0.6 && fy > 0. && fy < 2.2 && !isLounge(fl) && !inGallery(fromSide(ip,s))){
           tr = length(ip - c0);
           p = RD_D + vec3(ip.x - SQ_IN - BED_D, fy, ip.z - uz*UW - BED_L);
           rd = toSide(rd, s);

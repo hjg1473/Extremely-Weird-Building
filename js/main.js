@@ -55,7 +55,8 @@ function roomWindow(q) {
   return q.map((v, i) => Math.sign(v) * (i === ax ? 11.6 : 7));
 }
 // the flat the player entered the rooms from: [side, floor base y, unit centre]
-const home = [0, 1202 * 3.6, 0];
+const home = [0, 1202 * 3.6, 24];
+const inGallery = p => p[0] > 25 && p[0] < 42.4 && Math.abs(p[2]) < 18 && p[1] > 1202*FH-.3 && p[1] < 1208*FH+.3;
 
 // Crossing from p to np: returns {pos, space, rot} if a portal took us somewhere else.
 // rot(v) re-expresses a direction in the new space.
@@ -68,7 +69,7 @@ function camPortal(space, p, np) {
       if ((f = crossT(c0[2] - uz * UW, c1[2] - uz * UW, BED_L, -1)) >= 0) {
         const ip = lerp3(c0, c1, f);
         const fl = Math.floor(ip[1] / FH), fy = ip[1] - fl * FH;
-        if (Math.abs(ip[0] - SQ_IN - BED_D) < 0.6 && fy > -0.5 && fy < 2.6 && !isLounge(fl)) {
+        if (Math.abs(ip[0] - SQ_IN - BED_D) < 0.6 && fy > -0.5 && fy < 2.6 && !isLounge(fl) && !inGallery(fromSide(ip,s))) {
           home[0] = s; home[1] = fl * FH; home[2] = uz * UW;
           const fy1 = c1[1] - fl * FH;
           return { pos: add(RD_D, [c1[0] - SQ_IN - BED_D, fy1, c1[2] - uz * UW - BED_L]), space: ROOMS, rot: v => toSide(v, s) };
@@ -110,6 +111,7 @@ const LOUNGE_LINES = [
 // where in the tower are we? (for the HUD)
 function region(pos) {
   if (P.space === ROOMS) return { key: 'rooms', name: '침실', sub: '방마다 아래가 다른 곳을 향한다' };
+  if (inGallery(pos)) return {key:'gallery',name:'동쪽 호텔 갤러리',sub:'붉은 복도 너머, 라운지와 경사로가 여섯 층의 공동을 가로지른다'};
   const s = sideOf(pos), c = toSide(pos, s);
   const fl = Math.floor((pos[1] - 0.2) / FH);
   const floorNo = fl + 1;
@@ -121,7 +123,7 @@ function region(pos) {
   }
   if (c[0] > SQ_IN && c[0] < SQ_OUT && Math.abs(c[2]) < SQ_IN) {
     const uz = clamp(Math.round(c[2] / UW), -2, 2);
-    const mine = fl === SPAWN_FLOOR && s === 0 && uz === 0;
+    const mine = fl === SPAWN_FLOOR && s === 0 && uz === 2;
     return { key: 'flat' + fl + '/' + s + '/' + uz, name: `${floorNo}층 ${s * 5 + uz + 3}호`, sub: mine ? '평범한 집. 우리 집이다.' : '누군가의 집. 우리 집과 똑같다.' };
   }
   if (c[0] <= SQ_IN && r > R_ATR) return { key: 'corr' + fl, name: `${floorNo}층 복도`, sub: '복도는 계단을 둘러싸고 있다' };
@@ -131,13 +133,14 @@ function region(pos) {
 
 const SPAWN_FLOOR = 1202;   // you live in 1203호 (floor 1203)
 const SPAWNS = [
-  { space: TOWER, pos: [SQ_IN + 7.5, SPAWN_FLOOR * FH + 1.6, 1.5], yaw: -Math.PI / 2 + 0.25, pitch: 0.02 },     // living room
+  { space: TOWER, pos: [SQ_IN + 7.5, SPAWN_FLOOR * FH + 1.6, 25.5], yaw: -Math.PI / 2 + 0.25, pitch: 0.02 },    // preserved flat beside the gallery
   { space: TOWER, pos: [28.2, SPAWN_FLOOR * FH + 1.6, 4], yaw: Math.PI, pitch: 0 },                           // corridor
   (() => { const a = -2 * Math.PI * SPAWN_FLOOR / 5, cx = Math.cos(a), cz = Math.sin(a);                    // atrium bridge
     return { space: TOWER, pos: [cx * 24.6, SPAWN_FLOOR * FH + 1.6, cz * 24.6], yaw: Math.atan2(cx, cz), pitch: -0.35 }; })(),
   { space: TOWER, pos: [SQ_IN + 13.1, SPAWN_FLOOR * FH + 1.6, 0], yaw: Math.PI / 2 + 0.6, pitch: 0.15 },      // balcony
   { space: ROOMS, pos: [12, 10.6, 21], yaw: 0, pitch: 0 },
-  { space: TOWER, pos: [32.5, (SPAWN_FLOOR + 1) * FH + 1.6, 9], yaw: -Math.PI / 2 - 0.5, pitch: 0.08 }       // the lounge one floor up
+  { space: TOWER, pos: [-32.5, (SPAWN_FLOOR + 1) * FH + 1.6, -9], yaw: Math.PI / 2 - 0.5, pitch: 0.08 },      // preserved west lounge
+  { space: TOWER, pos: [28.2, SPAWN_FLOOR*FH+1.6,4], yaw:-Math.PI/2-.55,pitch:.1 }
 ];
 
 // ---------- GL ----------
@@ -160,9 +163,9 @@ gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
 
 const BODY = SHADERS.header + SHADERS.worldConsts +
-  SHADERS.Tower.defs + SHADERS.D.defs +
+  SHADERS.Tower.defs + SHADERS.D.defs + SHADERS.Gallery +
   SHADERS.worldDispatch + SHADERS.lighting +
-  SHADERS.Tower.shade + SHADERS.D.shade +
+  SHADERS.GalleryShade + SHADERS.Tower.shade + SHADERS.D.shade +
   SHADERS.worldShade;
 
 function makeProgram(fsrc) {
@@ -182,7 +185,7 @@ function ready(p, names) {
   p.u = {}; for (const n of names) p.u[n] = gl.getUniformLocation(p.prog, n);
   p.ready = true; return true;
 }
-const UN = ['uRes', 'uTime', 'uCam', 'uRot', 'uFov', 'uSpace', 'uDepth', 'uWarp', 'uWarpC', 'uProbe', 'uHome', 'uDip'];
+const UN = ['uRes', 'uTime', 'uCam', 'uRot', 'uFov', 'uSpace', 'uDepth', 'uWarp', 'uWarpC', 'uProbe', 'uHome', 'uDip', 'uSupply'];
 const render = makeProgram(BODY + SHADERS.main);
 const probe = floatRT ? makeProgram(BODY.replace('#version 300 es', '#version 300 es\n#define PROBE') + SHADERS.probeMain) : null;
 
@@ -280,7 +283,7 @@ window.addEventListener('keydown', e => {
     else { lastSpace = now; jumpQueued = true; }
   }
   keys.add(e.code);
-  if (/^Digit[1-6]$/.test(e.code)) spawn(+e.code[5] - 1);
+  if (/^Digit[1-7]$/.test(e.code)) spawn(+e.code[5] - 1);
   if (e.code === 'KeyN') { P.noclip = !P.noclip; showMode(); }
   if (e.code === 'KeyH') document.body.classList.toggle('nohud');
   if (e.code === 'KeyR') spawn(0);
@@ -364,6 +367,7 @@ $('warp').addEventListener('input', e => { warpAmt = +e.target.value; });
 
 // ---------- sound: fluorescent hum, brown-outs, and a voice from somewhere in the building ----------
 let AC = null, humGain = null, rumble = null, dip = 0, dipUntil = 0, nextDip = 12 + Math.random() * 20;
+const power = createBuildingPower();
 let nextVoice = 35 + Math.random() * 30, voice = null;
 const LINE = '야. 개 짖는 소리 좀 안나게 해라.';
 function pickVoice() {
@@ -420,6 +424,7 @@ function speak() {
   }
 }
 function updateSound(dt) {
+  power.update(dt);
   // brown-outs: during the voice, and now and then on their own
   if (time > nextDip) { dipUntil = Math.max(dipUntil, time + 0.25 + Math.random() * 0.6); nextDip = time + 15 + Math.random() * 35; }
   const target = time < dipUntil ? 1 : 0;
@@ -429,6 +434,7 @@ function updateSound(dt) {
   const rg = region(P.pos).key;
   let h = rg.startsWith('corr') ? 0.03 : rg.startsWith('flat') ? 0.008 : rg === 'atrium' ? 0.01 : 0.002;
   if (dip > 0.1) h *= Math.random() < 0.5 ? 0.1 : 1.6;     // the tubes crackle when the power sags
+  h *= power.state().supply;
   humGain.gain.setTargetAtTime(h, AC.currentTime, 0.05);
 }
 
@@ -564,17 +570,20 @@ const t0 = performance.now();
 const autoStep = { on: false };
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  time += dt;
+  const elapsed = document.hidden ? 0 : Math.min(1, (now-last)/1000);
+  const dt = Math.min(0.05, elapsed); last = now;
+  time += elapsed;
   const allReady = ready(render, UN) && (!probe || ready(probe, UN));
   if (allReady && !autoStep.on) physics(dt);
-  updateSound(dt);
+  if (allReady) updateSound(elapsed);
 
-  frameAcc += dt; frameN++;
-  if (frameN >= 20 && !(fixedScale > 0)) {
+  frameAcc += elapsed; frameN++;
+  if (frameN >= 20) {
     const avg = frameAcc / frameN;
-    if (avg > 1 / 40) scale = Math.max(0.3, scale * 0.9);
-    else if (avg < 1 / 55) scale = Math.min(qualityMax, scale * 1.05);
+    if (!(fixedScale > 0)) {
+      if (avg > 1 / 40) scale = Math.max(0.3, scale * 0.9);
+      else if (avg < 1 / 55) scale = Math.min(qualityMax, scale * 1.05);
+    }
     fpsShown = 1 / avg; frameAcc = 0; frameN = 0;
   }
   resize();
@@ -604,14 +613,15 @@ function draw() {
   gl.uniform3fv(render.u.uWarpC, warpCenterFor(P.space, P.pos));
   gl.uniform3fv(render.u.uHome, home);
   gl.uniform1f(render.u.uDip, dip);
+  gl.uniform1f(render.u.uSupply, power.state().supply);
   drawQuad();
 }
 
 if (!floatRT) { P.noclip = true; console.warn('EXT_color_buffer_float unavailable: collisions disabled'); }
 // test hook
-window.__IA = { speak, P, spawn, physics, keys, camPortal, sampleSDF, autoStep, roomUp, get time() { return time; }, set time(v) { time = v; }, press: c => window.dispatchEvent(new KeyboardEvent('keydown', { code: c })) };
+window.__IA = { power, speak, P, spawn, physics, keys, camPortal, sampleSDF, autoStep, roomUp, get time() { return time; }, set time(v) { time = v; }, press: c => window.dispatchEvent(new KeyboardEvent('keydown', { code: c })) };
 
-const startIdx = { HOME: 0, CORRIDOR: 1, STAIRS: 2, BALCONY: 3, ROOMS: 4 }[location.hash.replace('#', '').toUpperCase()] ?? 0;
+const startIdx = { HOME: 0, CORRIDOR: 1, STAIRS: 2, BALCONY: 3, ROOMS: 4, LOUNGE:5, GALLERY:6 }[location.hash.replace('#', '').toUpperCase()] ?? 6;
 spawn(startIdx);
 showMode();
 requestAnimationFrame(frame);

@@ -1,0 +1,5 @@
+# Read-only baseline cloned to compare the supplied working folder with main.
+.upstream/
+# Supplied archive; not part of the active renderer.
+_to_delete/
+node_modules/

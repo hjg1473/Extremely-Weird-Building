@@ -75,16 +75,24 @@ vec2 mapAtrium(vec3 p){
 
 
 // ---------- fluorescent tubes: most hum along, some stutter, some are dead ----------
+float fixtureHash(float id){
+  uint h=uint(int(id));
+  h^=h>>16; h*=0x7feb352du; h^=h>>15; h*=0x846ca68bu; h^=h>>16;
+  return float(h & 0x00ffffffu)/16777216.;
+}
 float flick(float id){
-  float h = hash11(id*1.37 + 0.5);
+  float h = fixtureHash(id);
   float t = uTime;
   float f;
-  if(h < 0.07) f = 0.03;
-  else if(h < 0.2) f = step(0.45, hash11(floor(t*14.) + id*7.13))*(0.55 + 0.45*hash11(floor(t*40.) + id));
-  else f = hash11(floor(t*6.) + id*3.1) > 0.992 ? 0.15 : 1.;
+  if(h < 0.1) f = 0.;
+  else if(h < 0.4){
+    float burst=fixtureHash(floor(t*.7)+id*131.);
+    f=burst>.45 ? step(.48,fixtureHash(floor(t*17.)+id*67.)) : 1.;
+  } else f = 1.;
   // now and then the whole building browns out (driven from JS, e.g. while the voice speaks)
   float dip = uDip*step(0.45, hash11(floor(t*16.) + id*0.7 + 3.));
-  return f*(1. - dip*0.92);
+  float restart=smoothstep(h*.65+.01,h*.65+.3,uSupply);
+  return f*(1. - dip*0.92)*restart;
 }
 
 // ---------- lounges: every 12 floors, three storeys are one great room ----------
@@ -341,7 +349,7 @@ vec3 shadeLounge(vec3 p, vec3 n, vec3 rd, float m, vec3 c, int s, float nb, floa
         float fre = 0.04 + 0.96*pow(1. - max(dot(n, -rd), 0.), 5.);
         vec3 col = vec3(0.01, 0.025, 0.03) + fogColT(rf)*fre*0.7*sh;
         vec3 L = fromSide(vec3(37., nb*FH + 6.6, zc), s);
-        col += vec3(1., 0.7, 0.4)*pow(max(dot(rf, normalize(L - p)), 0.), 300.)*3.;
+        col += vec3(1., 0.7, 0.4)*pow(max(dot(rf, normalize(L - p)), 0.), 300.)*3.*uSupply;
         col += vec3(0.04, 0.03, 0.02)*(0.5 + 0.5*sin(dot(p.xz, vec2(3., 2.)) + uTime*0.7));
         return col;
       }
@@ -361,7 +369,7 @@ vec3 shadeLounge(vec3 p, vec3 n, vec3 rd, float m, vec3 c, int s, float nb, floa
   else if(m < 51.5){ float h = hash13(vec3(nb, float(s), zc)); alb = h < 0.4 ? vec3(0.45, 0.06, 0.07) : h < 0.75 ? vec3(0.82, 0.78, 0.7) : vec3(0.08, 0.25, 0.27); alb *= 0.85 + 0.2*noise2(p.xz*25.); }
   else if(m < 52.5){ alb = vec3(0.24, 0.14, 0.08)*(0.8 + 0.3*noise2(vec2(p.x + p.z, p.y*14.))); spec = 0.25; }
   else if(m < 53.5){ alb = vec3(0.55, 0.4, 0.18); spec = 0.9; }
-  else if(m < 54.5) return vec3(2.0, 1.45, 0.8);
+  else if(m < 54.5) return vec3(.025)+vec3(2.0, 1.45, 0.8)*flick(nb*31.+float(s)*7.+zc);
   else if(m < 55.5){ alb = vec3(0.012); spec = 1.2; }
   else if(m < 56.5){ float h = hash12(floor(vec2(c.z/0.1, ly/0.6))); alb = mix(vec3(0.35, 0.22, 0.14), 0.3 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.5); }
   else if(m < 57.5) alb = vec3(0.16, 0.3, 0.12)*(0.6 + 0.6*noise2(p.xy*6.));
@@ -373,20 +381,21 @@ vec3 shadeLounge(vec3 p, vec3 n, vec3 rd, float m, vec3 c, int s, float nb, floa
   // the nearest pendant globe and floor lamp
   vec3 L = fromSide(vec3(37., nb*FH + 6.6, zc), s);
   vec3 lv = L - p; float ld = length(lv); lv /= ld;
-  lin += clamp(dot(n, lv), 0., 1.)*(0.4 + 0.6*ao)*14./(ld*ld + 2.)*vec3(1.3, 0.85, 0.45);
+  lin += clamp(dot(n, lv), 0., 1.)*(0.4 + 0.6*ao)*14./(ld*ld + 2.)*vec3(1.3, 0.85, 0.45)*flick(nb*31.+float(s)*7.+zc);
   if(tp < 2.5){
     vec3 F = fromSide(vec3(39.2, nb*FH + 1.75, zc + 2.3), s);
     vec3 fv = F - p; float fd = length(fv); fv /= fd;
-    lin += clamp(dot(n, fv), 0., 1.)*(0.4 + 0.6*ao)*2.2/(fd*fd + 0.3)*vec3(1.3, 0.85, 0.45);
+    lin += clamp(dot(n, fv), 0., 1.)*(0.4 + 0.6*ao)*2.2/(fd*fd + 0.3)*vec3(1.3, 0.85, 0.45)*uSupply;
   }
   vec3 col = alb*lin;
-  col += spec*pow(max(dot(reflect(rd, n), lv), 0.), 40.)*vec3(1., 0.7, 0.4)*2.5*ao;
+  col += spec*pow(max(dot(reflect(rd, n), lv), 0.), 40.)*vec3(1., 0.7, 0.4)*2.5*ao*uSupply;
   col += spec*pow(1. - max(dot(n, -rd), 0.), 5.)*fogColT(reflect(rd, n))*0.25*ao;
   col += spec*sh*pow(max(dot(n, normalize(SUN_T - rd)), 0.), 40.)*0.4;
   return col;
 }
 
 vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
+  if(m>59.5) return shadeGallery(p,n,rd,m,ao,sh);
   vec3 alb = vec3(0.7); float spec = 0.05; vec3 emi = vec3(0.);
   int s = sideOf(p);
   vec3 c = toSide(p, s);
@@ -413,7 +422,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
     else if(mid == 3.){ alb = vec3(0.55, 0.56, 0.58); spec = 0.4; }
     else {
       alb = vec3(0.03, 0.04, 0.05); spec = 1.;
-      if(gWin > 0.55) emi = mix(vec3(1., 0.66, 0.34), vec3(0.75, 0.85, 1.), step(0.92, gWin))*1.6*(0.4 + gWin);
+      if(gWin > 0.55) emi = mix(vec3(1., 0.66, 0.34), vec3(0.75, 0.85, 1.), step(0.92, gWin))*1.6*(0.4 + gWin)*uSupply;
     }
   } else if(m < 22.5){
     alb = m < 21.5 ? vec3(0.8, 0.79, 0.77)*concreteTex(p, n, 2.) : vec3(0.16);
@@ -453,7 +462,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   else if(m < 42.5){ alb = vec3(0.38, 0.24, 0.14)*(0.8 + 0.3*noise2(vec2(c.x + c.z, p.y*12.))); spec = 0.2; }
   else if(m < 43.5) alb = (0.3 + 0.25*cos(TAU*(uh*1.7 + vec3(0.5, 0.2, 0.)))) *(0.85 + 0.2*noise2(p.xz*30.));
   else if(m < 44.5){ float h = hash12(floor(vec2((c.x)/0.09, p.y/0.55))); alb = mix(vec3(0.4, 0.33, 0.26), 0.35 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.6); }
-  else if(m < 45.5){ return lampOn ? mix(vec3(0.2, 0.18, 0.16), vec3(1.5, 1.2, 0.85), lampF) : vec3(0.25, 0.22, 0.2); }
+  else if(m < 45.5){ return lampOn ? mix(vec3(0.025), vec3(1.5, 1.2, 0.85), lampF) : vec3(0.025); }
   else if(m < 46.5){ alb = vec3(0.12); spec = 0.5; }
   else if(m < 47.5) return mix(vec3(0.06), vec3(1.2, 1.3, 1.28), corrF);
 
