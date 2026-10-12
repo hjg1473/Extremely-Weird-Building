@@ -68,7 +68,7 @@ function camPortal(space, p, np) {
       if ((f = crossT(c0[2] - uz * UW, c1[2] - uz * UW, BED_L, -1)) >= 0) {
         const ip = lerp3(c0, c1, f);
         const fl = Math.floor(ip[1] / FH), fy = ip[1] - fl * FH;
-        if (Math.abs(ip[0] - SQ_IN - BED_D) < 0.6 && fy > -0.5 && fy < 2.6) {
+        if (Math.abs(ip[0] - SQ_IN - BED_D) < 0.6 && fy > -0.5 && fy < 2.6 && !isLounge(fl)) {
           home[0] = s; home[1] = fl * FH; home[2] = uz * UW;
           const fy1 = c1[1] - fl * FH;
           return { pos: add(RD_D, [c1[0] - SQ_IN - BED_D, fy1, c1[2] - uz * UW - BED_L]), space: ROOMS, rot: v => toSide(v, s) };
@@ -96,6 +96,17 @@ function camPortal(space, p, np) {
   return null;
 }
 
+// every 12 floors, three storeys are one lounge (mirrors isLounge() in the shader)
+const isLounge = n => { const L = ((n % 12) + 12) % 12; return L > 2.5 && L < 5.5; };
+const loungeBase = n => n - ((((n % 12) + 12) % 12) - 3);
+const LOUNGE_LINES = [
+  '거대한 아치와 다리로 이어진 라운지. 어디가 바깥이고 어디가 안쪽인지 모호하다',
+  '어디선가 본 듯한 가구와 책들이 끝없이 반복된다',
+  '물에 비친 방이 진짜 방과 이어져 있는 것 같다',
+  '같은 라운지로 계속 돌아오는 것 같다',
+  '창밖이 또 다른 안쪽으로 이어진다'
+];
+
 // where in the tower are we? (for the HUD)
 function region(pos) {
   if (P.space === ROOMS) return { key: 'rooms', name: '침실', sub: '방마다 아래가 다른 곳을 향한다' };
@@ -103,6 +114,11 @@ function region(pos) {
   const fl = Math.floor((pos[1] - 0.2) / FH);
   const floorNo = fl + 1;
   const r = Math.hypot(pos[0], pos[2]);
+  const fl0 = Math.floor(pos[1] / FH);
+  if (isLounge(fl0) && r > R_ATR && c[0] < SQ_OUT) {
+    const nb = loungeBase(fl0);
+    return { key: 'lounge' + nb, name: `${nb + 1}층 라운지`, sub: LOUNGE_LINES[((nb / 12 | 0) % 5 + 5) % 5] };
+  }
   if (c[0] > SQ_IN && c[0] < SQ_OUT && Math.abs(c[2]) < SQ_IN) {
     const uz = clamp(Math.round(c[2] / UW), -2, 2);
     const mine = fl === SPAWN_FLOOR && s === 0 && uz === 0;
@@ -117,9 +133,11 @@ const SPAWN_FLOOR = 1202;   // you live in 1203호 (floor 1203)
 const SPAWNS = [
   { space: TOWER, pos: [SQ_IN + 7.5, SPAWN_FLOOR * FH + 1.6, 1.5], yaw: -Math.PI / 2 + 0.25, pitch: 0.02 },     // living room
   { space: TOWER, pos: [28.2, SPAWN_FLOOR * FH + 1.6, 4], yaw: Math.PI, pitch: 0 },                           // corridor
-  { space: TOWER, pos: [24.6, SPAWN_FLOOR * FH + 1.6, 0], yaw: Math.PI / 2, pitch: -0.35 },                    // atrium bridge
+  (() => { const a = -2 * Math.PI * SPAWN_FLOOR / 5, cx = Math.cos(a), cz = Math.sin(a);                    // atrium bridge
+    return { space: TOWER, pos: [cx * 24.6, SPAWN_FLOOR * FH + 1.6, cz * 24.6], yaw: Math.atan2(cx, cz), pitch: -0.35 }; })(),
   { space: TOWER, pos: [SQ_IN + 13.1, SPAWN_FLOOR * FH + 1.6, 0], yaw: Math.PI / 2 + 0.6, pitch: 0.15 },      // balcony
-  { space: ROOMS, pos: [12, 10.6, 21], yaw: 0, pitch: 0 }
+  { space: ROOMS, pos: [12, 10.6, 21], yaw: 0, pitch: 0 },
+  { space: TOWER, pos: [32.5, (SPAWN_FLOOR + 1) * FH + 1.6, 9], yaw: -Math.PI / 2 - 0.5, pitch: 0.08 }       // the lounge one floor up
 ];
 
 // ---------- GL ----------
@@ -164,7 +182,7 @@ function ready(p, names) {
   p.u = {}; for (const n of names) p.u[n] = gl.getUniformLocation(p.prog, n);
   p.ready = true; return true;
 }
-const UN = ['uRes', 'uTime', 'uCam', 'uRot', 'uFov', 'uSpace', 'uDepth', 'uWarp', 'uWarpC', 'uProbe', 'uHome'];
+const UN = ['uRes', 'uTime', 'uCam', 'uRot', 'uFov', 'uSpace', 'uDepth', 'uWarp', 'uWarpC', 'uProbe', 'uHome', 'uDip'];
 const render = makeProgram(BODY + SHADERS.main);
 const probe = floatRT ? makeProgram(BODY.replace('#version 300 es', '#version 300 es\n#define PROBE') + SHADERS.probeMain) : null;
 
@@ -201,6 +219,7 @@ function sampleSDF(space, points, warpC) {
   gl.uniform1f(probe.u.uWarp, warpAmt);
   gl.uniform3fv(probe.u.uWarpC, warpC);
   gl.uniform3fv(probe.u.uHome, home);
+  gl.uniform1f(probe.u.uDip, 0);
   const flat = new Float32Array(24); points.forEach((p, i) => flat.set(p, i * 3));
   gl.uniform3fv(probe.u.uProbe, flat);
   drawQuad();
@@ -261,7 +280,7 @@ window.addEventListener('keydown', e => {
     else { lastSpace = now; jumpQueued = true; }
   }
   keys.add(e.code);
-  if (/^Digit[1-5]$/.test(e.code)) spawn(+e.code[5] - 1);
+  if (/^Digit[1-6]$/.test(e.code)) spawn(+e.code[5] - 1);
   if (e.code === 'KeyN') { P.noclip = !P.noclip; showMode(); }
   if (e.code === 'KeyH') document.body.classList.toggle('nohud');
   if (e.code === 'KeyR') spawn(0);
@@ -337,9 +356,81 @@ function showMode() {
 }
 $('enter').addEventListener('click', () => {
   $('intro').classList.add('gone');
+  startAudio();
   if (matchMedia('(pointer:fine)').matches && canvas.requestPointerLock) canvas.requestPointerLock();
 });
 $('warp').addEventListener('input', e => { warpAmt = +e.target.value; });
+
+
+// ---------- sound: fluorescent hum, brown-outs, and a voice from somewhere in the building ----------
+let AC = null, humGain = null, rumble = null, dip = 0, dipUntil = 0, nextDip = 12 + Math.random() * 20;
+let nextVoice = 35 + Math.random() * 30, voice = null;
+const LINE = '야. 개 짖는 소리 좀 안나게 해라.';
+function pickVoice() {
+  if (!('speechSynthesis' in window)) return;
+  const vs = speechSynthesis.getVoices().filter(v => /^ko/i.test(v.lang));
+  voice = vs.find(v => /InJoon|Hyunsu|male|남성/i.test(v.name) && !/female|여성/i.test(v.name)) || vs[0] || null;
+}
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+
+function startAudio() {
+  if (AC) return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    // mains hum of old tubes: 120 Hz and its harmonics
+    const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+    humGain = AC.createGain(); humGain.gain.value = 0;
+    for (const [f, type, g] of [[120, 'sawtooth', 0.6], [240, 'sine', 0.3], [60, 'sine', 0.5]]) {
+      const o = AC.createOscillator(); o.type = type; o.frequency.value = f;
+      const og = AC.createGain(); og.gain.value = g; o.connect(og); og.connect(lp); o.start();
+    }
+    lp.connect(humGain); humGain.connect(AC.destination);
+    // a long reverb tail made of noise, used to give the voice a room it doesn't have
+    const len = AC.sampleRate * 4, buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+    rumble = buf;
+  } catch (e) { AC = null; }
+}
+function swell() {
+  // a low, distant swell of air while the voice speaks
+  if (!AC || !rumble) return;
+  const src = AC.createBufferSource(); src.buffer = rumble;
+  const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 180;
+  const g = AC.createGain(); const t = AC.currentTime;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.35, t + 0.8); g.gain.linearRampToValueAtTime(0, t + 4);
+  src.connect(f); f.connect(g); g.connect(AC.destination); src.start();
+}
+function subtitle(text) {
+  const el = $('voice'); el.textContent = text;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+function speak() {
+  dipUntil = time + 4.5;
+  swell();
+  subtitle('— ' + LINE);
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  // the line, then its own tail coming back fainter and slower: an echo down the corridors
+  const parts = [[LINE, 1.0, 0.72, 0.15], ['안나게 해라.', 0.35, 0.66, 0.08], ['해라.', 0.14, 0.6, 0.02]];
+  for (const [t, v, r, p] of parts) {
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = 'ko-KR'; if (voice) u.voice = voice;
+    u.volume = v; u.rate = r; u.pitch = p;
+    speechSynthesis.speak(u);
+  }
+}
+function updateSound(dt) {
+  // brown-outs: during the voice, and now and then on their own
+  if (time > nextDip) { dipUntil = Math.max(dipUntil, time + 0.25 + Math.random() * 0.6); nextDip = time + 15 + Math.random() * 35; }
+  const target = time < dipUntil ? 1 : 0;
+  dip += (target - dip) * Math.min(1, dt * 12);
+  if (time > nextVoice && $('intro').classList.contains('gone')) { speak(); nextVoice = time + 75 + Math.random() * 100; }
+  if (!humGain) return;
+  const rg = region(P.pos).key;
+  let h = rg.startsWith('corr') ? 0.03 : rg.startsWith('flat') ? 0.008 : rg === 'atrium' ? 0.01 : 0.002;
+  if (dip > 0.1) h *= Math.random() < 0.5 ? 0.1 : 1.6;     // the tubes crackle when the power sags
+  humGain.gain.setTargetAtTime(h, AC.currentTime, 0.05);
+}
 
 // ---------- physics ----------
 function warpCenterFor(space, pos) { return space === ROOMS ? pos : [12, 12, 12]; }
@@ -477,6 +568,7 @@ function frame(now) {
   time += dt;
   const allReady = ready(render, UN) && (!probe || ready(probe, UN));
   if (allReady && !autoStep.on) physics(dt);
+  updateSound(dt);
 
   frameAcc += dt; frameN++;
   if (frameN >= 20 && !(fixedScale > 0)) {
@@ -511,12 +603,13 @@ function draw() {
   gl.uniform1f(render.u.uWarp, warpAmt);
   gl.uniform3fv(render.u.uWarpC, warpCenterFor(P.space, P.pos));
   gl.uniform3fv(render.u.uHome, home);
+  gl.uniform1f(render.u.uDip, dip);
   drawQuad();
 }
 
 if (!floatRT) { P.noclip = true; console.warn('EXT_color_buffer_float unavailable: collisions disabled'); }
 // test hook
-window.__IA = { P, spawn, physics, keys, camPortal, sampleSDF, autoStep, roomUp, get time() { return time; }, set time(v) { time = v; }, press: c => window.dispatchEvent(new KeyboardEvent('keydown', { code: c })) };
+window.__IA = { speak, P, spawn, physics, keys, camPortal, sampleSDF, autoStep, roomUp, get time() { return time; }, set time(v) { time = v; }, press: c => window.dispatchEvent(new KeyboardEvent('keydown', { code: c })) };
 
 const startIdx = { HOME: 0, CORRIDOR: 1, STAIRS: 2, BALCONY: 3, ROOMS: 4 }[location.hash.replace('#', '').toUpperCase()] ?? 0;
 spawn(startIdx);

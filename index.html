@@ -28,6 +28,9 @@
 
   #mode { left: 50%; bottom: 22px; transform: translateX(-50%); font-size: 11px; letter-spacing: .12em; padding: 7px 12px; color: var(--dim); }
   #mode.fly { color: #111; background: var(--accent); border-color: var(--accent); }
+  #voice { left: 50%; bottom: 78px; transform: translateX(-50%); font: italic 400 15px 'Noto Serif KR', serif; color: rgba(242,239,233,.75); text-shadow: 0 1px 10px rgba(0,0,0,.8); opacity: 0; white-space: nowrap; letter-spacing: .06em; }
+  #voice.show { animation: voice 6.5s ease forwards; }
+  @keyframes voice { 0% { opacity: 0; filter: blur(3px); } 12% { opacity: 1; filter: blur(0); } 55% { opacity: .85; } 100% { opacity: 0; filter: blur(2px); } }
   #stats { top: 14px; right: 14px; font-size: 10px; letter-spacing: .08em; color: var(--dim); }
 
   #help { bottom: 18px; left: 18px; font-size: 10.5px; line-height: 1.9; color: var(--dim); padding: 10px 13px; pointer-events: auto; }
@@ -61,12 +64,13 @@
 <div id="cross" class="hud"></div>
 <div id="place" class="hud"><div id="placeName"></div><div id="placeSub"></div></div>
 <div id="mode" class="hud panel"></div>
+<div id="voice" class="hud"></div>
 <div id="stats" class="hud"></div>
 <div id="loading" class="panel">집을 짓는 중… <span id="loadingT"></span><small>처음 열 때는 셰이더 컴파일에 수십 초가 걸릴 수 있어요</small></div>
 <aside id="help" class="hud panel">
   <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 걷기 · <kbd>Shift</kbd> 달리기 · 마우스 시점</div>
   <div><kbd>Space</kbd> 점프 · <kbd>Space</kbd>×2 비행 ↔ 중력</div>
-  <div>비행 중 <kbd>Space</kbd>/<kbd>C</kbd> 상승·하강 · <kbd>R</kbd> 우리 집으로 · <kbd>H</kbd> UI</div>
+  <div>비행 중 <kbd>Space</kbd>/<kbd>C</kbd> 상승·하강 · <kbd>R</kbd> 우리 집으로 · <kbd>6</kbd> 라운지 · <kbd>H</kbd> UI</div>
   <div id="warpRow"><span>공간 뒤틀림</span><input id="warp" type="range" min="0" max="3" step="0.05" value="1"></div>
 </aside>
 

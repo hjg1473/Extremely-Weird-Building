@@ -73,12 +73,109 @@ vec2 mapAtrium(vec3 p){
   return res;
 }
 
+
+// ---------- fluorescent tubes: most hum along, some stutter, some are dead ----------
+float flick(float id){
+  float h = hash11(id*1.37 + 0.5);
+  float t = uTime;
+  float f;
+  if(h < 0.07) f = 0.03;
+  else if(h < 0.2) f = step(0.45, hash11(floor(t*14.) + id*7.13))*(0.55 + 0.45*hash11(floor(t*40.) + id));
+  else f = hash11(floor(t*6.) + id*3.1) > 0.992 ? 0.15 : 1.;
+  // now and then the whole building browns out (driven from JS, e.g. while the voice speaks)
+  float dip = uDip*step(0.45, hash11(floor(t*16.) + id*0.7 + 3.));
+  return f*(1. - dip*0.92);
+}
+
+// ---------- lounges: every 12 floors, three storeys are one great room ----------
+bool isLounge(float n){ float L = mod(n, 12.); return L > 2.5 && L < 5.5; }
+float loungeBase(float n){ return n - (mod(n, 12.) - 3.); }
+float loungeType(float nb, int s, float zc){ return floor(hash13(vec3(nb*0.37, float(s) + 0.5, zc*0.11 + 3.))*5.); }
+
+vec2 mapLounge(vec3 p, vec3 c, int s, float nb, float r){
+  float LH = 3.*FH;
+  float ly = p.y - nb*FH;
+  vec2 res = vec2(1e9, 0.);
+  float slab = max(min(abs(ly + 0.15) - 0.15, abs(ly - LH + 0.15) - 0.15), max(R_ATR - r, c.x - SQ_OUT - 0.3));
+  res = opU(res, vec2(slab, 50.));
+  // galleries around the atrium on the two upper levels
+  float gal = max(min(abs(ly - FH + 0.12) - 0.12, abs(ly - 2.*FH + 0.12) - 0.12), max(R_ATR - r, r - 30.5));
+  res = opU(res, vec2(gal, 58.));
+  res = opU(res, vec2(max(abs(r - 30.42) - 0.05, min(abs(ly - FH - 0.5) - 0.5, abs(ly - 2.*FH - 0.5) - 0.5)), 53.));
+  // facade of tall arches (one of them a round window)
+  float zc = clamp(round(c.z/14.), -2., 2.)*14.;
+  float dz = c.z - zc;
+  bool ring = (s == 2 && zc == 0.);
+  float arch = ring ? length(vec2(dz, ly - 5.4)) - 4.8
+                    : min(sdBox2(vec2(dz, ly - 2.5), vec2(5.5, 2.6)), length(vec2(dz, ly - 5.)) - 5.5);
+  float wall = max(abs(c.x - 41.8) - 0.4, abs(c.z) - 42.2);
+  wall = max(wall, -max(arch, abs(c.x - 41.8) - 3.));
+  res = opU(res, vec2(wall, 58.));
+  if(!ring) res = opU(res, vec2(sdBox(vec3(c.x - 41.75, ly - 0.5, dz), vec3(0.1, 0.5, 5.5)), 53.));
+  // bookcases up the piers between the arches
+  float bk = max(sdBox(vec3(c.x - 41.0, ly - 4., dz), vec3(0.4, 4., 7.)), 5.8 - abs(dz));
+  if(bk < 0.6){
+    float cut = sdBox(vec3(c.x - 40.65, mod(ly, 0.6) - 0.32, dz), vec3(0.4, 0.25, 9.));
+    float books = max(sdBox(vec3(c.x - 40.95, mod(ly, 0.6) - 0.24, mod(c.z, 0.1) - 0.05), vec3(0.3, 0.13 + 0.05*hash11(floor(c.z/0.1) + floor(ly/0.6)*9.), 0.04)), bk);
+    res = opU(res, vec2(max(bk, -max(cut, 5.9 - abs(dz))), 52.));
+    res = opU(res, vec2(books, 56.));
+  } else res = opU(res, vec2(bk, 52.));
+  // fluted columns with planters
+  if(abs(c.z) < 36.){
+    float cq = c.z - 14.*round((c.z - 7.)/14.) - 7.;
+    vec2 cp = vec2(c.x - 34., cq);
+    float col = max(length(cp) - 0.5 - 0.04*cos(atan(cp.y, cp.x)*16.), abs(ly - LH*.5) - LH*.5);
+    col = min(col, sdBox(vec3(cp.x, ly - 0.25, cp.y), vec3(0.75, 0.25, 0.75)));
+    col = min(col, sdBox(vec3(cp.x, ly - LH + 0.4, cp.y), vec3(0.8, 0.4, 0.8)));
+    res = opU(res, vec2(col*0.9, 58.));
+    vec3 pq = vec3(cp.x + 1.4, ly, cp.y);
+    res = opU(res, vec2(max(length(pq.xz) - 0.45, abs(ly - 0.35) - 0.35), 52.));
+    float fol = length(vec3(pq.x, (ly - 1.6)*0.8, pq.z)) - 0.9 + 0.12*sin(pq.x*9.)*sin(ly*8.)*sin(pq.z*9.);
+    res = opU(res, vec2(fol*0.7, 57.));
+  }
+  // something furnished in front of every arch
+  if(abs(c.z) < 35.){
+    float tp = loungeType(nb, s, zc);
+    vec3 q = vec3(c.x - 37., ly, dz);
+    res = opU(res, vec2(length(q - vec3(0., 6.6, 0.)) - 0.55, 54.));
+    res = opU(res, vec2(max(length(q.xz) - 0.02, abs(ly - 8.7) - 2.), 53.));
+    if(tp < 2.5){
+      res = opU(res, vec2(max(length(q.xz) - 0.75, abs(ly - 0.22) - 0.22) - 0.02, 52.));
+      vec3 a = vec3(abs(q.x) - 1.9, ly, q.z);
+      float sofa = sdBox(a - vec3(0., 0.25, 0.), vec3(0.5, 0.2, 1.3)) - 0.08;
+      sofa = min(sofa, sdBox(a - vec3(0.42, 0.62, 0.), vec3(0.12, 0.4, 1.3)) - 0.08);
+      vec3 b = vec3(q.x, ly, q.z + 2.2);
+      sofa = min(sofa, sdBox(b - vec3(0., 0.25, 0.), vec3(1.1, 0.2, 0.45)) - 0.08);
+      sofa = min(sofa, sdBox(b - vec3(0., 0.62, -0.38), vec3(1.1, 0.4, 0.12)) - 0.08);
+      res = opU(res, vec2(sofa, 51.));
+      vec3 fl = vec3(q.x - 2.2, ly, q.z - 2.3);
+      res = opU(res, vec2(max(length(fl.xz) - 0.03, abs(ly - 0.8) - 0.8), 53.));
+      res = opU(res, vec2(max(length(fl.xz) - 0.3 + (ly - 1.6)*0.5, abs(ly - 1.75) - 0.22), 54.));
+    } else if(tp < 3.5){
+      vec3 g = q;
+      float body = sdBox(g - vec3(0., 0.9, 0.), vec3(0.75, 0.16, 1.1)) - 0.04;
+      body = min(body, max(length(vec2(abs(g.x) - 0.55, abs(g.z) - 0.85)) - 0.07, abs(ly - 0.4) - 0.4));
+      body = min(body, sdBox(vec3(g.x - 0.1, ly - 1.1 - (0.75 - g.x)*0.55, g.z), vec3(0.75, 0.02, 1.05))*0.8);
+      body = min(body, sdBox(g - vec3(0., 0.45, 1.6), vec3(0.5, 0.06, 0.2)));
+      res = opU(res, vec2(body, 55.));
+    } else {
+      vec3 a = q - vec3(0.5, 0., 0.3);
+      float ch = sdBox(a - vec3(0., 0.3, 0.), vec3(0.5, 0.18, 0.5)) - 0.08;
+      ch = min(ch, sdBox(a - vec3(-0.4, 0.75, 0.), vec3(0.1, 0.45, 0.5)) - 0.08);
+      ch = min(ch, sdBox(vec3(a.x, ly - 0.55, abs(a.z) - 0.5), vec3(0.45, 0.12, 0.08)) - 0.06);
+      res = opU(res, vec2(ch, 51.));
+    }
+  }
+  return res;
+}
+
 // ---------- apartments, corridor floors, facade ----------
 vec2 mapFloors(vec3 p){
   int s = sideOf(p);
   vec3 c = toSide(p, s);
   float r = length(p.xz);
   float n = floor(p.y/FH), fy = p.y - n*FH;
+  if(isLounge(n)) return mapLounge(p, c, s, loungeBase(n), r);
   // floor slabs everywhere between atrium and facade (top surface at fy = 0)
   float ds = abs(p.y - FH*round((p.y + 0.15)/FH) + 0.15) - 0.15;
   vec2 res = vec2(max(max(ds, R_ATR - r), c.x - SQ_OUT), 40.);
@@ -228,6 +325,67 @@ vec3 fogColT(vec3 rd){
 shade: `
 vec3 unitTint(float h){ return mix(vec3(0.66, 0.58, 0.44), 0.55 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.35); }
 
+
+vec3 shadeLounge(vec3 p, vec3 n, vec3 rd, float m, vec3 c, int s, float nb, float ao, float sh){
+  float ly = p.y - nb*FH;
+  float zc = clamp(round(c.z/14.), -2., 2.)*14.;
+  float dz = c.z - zc;
+  float tp = loungeType(nb, s, zc);
+  vec3 q = vec3(c.x - 37., ly, dz);
+  vec3 alb = vec3(0.7); float spec = 0.05;
+  if(m < 50.5){
+    if(n.y > 0.6){
+      if(tp > 3.5 && abs(dz) < 6. && c.x > 32.5 && c.x < 41.3 && abs(c.z) < 35.){
+        // still water: the room again, upside down and darker
+        vec3 rf = reflect(rd, n);
+        float fre = 0.04 + 0.96*pow(1. - max(dot(n, -rd), 0.), 5.);
+        vec3 col = vec3(0.01, 0.025, 0.03) + fogColT(rf)*fre*0.7*sh;
+        vec3 L = fromSide(vec3(37., nb*FH + 6.6, zc), s);
+        col += vec3(1., 0.7, 0.4)*pow(max(dot(rf, normalize(L - p)), 0.), 300.)*3.;
+        col += vec3(0.04, 0.03, 0.02)*(0.5 + 0.5*sin(dot(p.xz, vec2(3., 2.)) + uTime*0.7));
+        return col;
+      }
+      vec2 g = floor(p.xz/1.2);
+      alb = mix(vec3(0.46, 0.4, 0.33), vec3(0.11, 0.08, 0.06), mod(g.x + g.y, 2.));
+      alb *= 0.8 + 0.3*fbm2(p.xz*0.7);
+      spec = 0.8;
+      if(tp < 2.5 && abs(q.x) < 2.7 && abs(q.z) < 3.3 && abs(c.z) < 35.){
+        vec2 rq = abs(vec2(q.x/2.7, q.z/3.3));
+        float border = step(0.86, max(rq.x, rq.y));
+        alb = mix(vec3(0.42, 0.08, 0.06), vec3(0.75, 0.55, 0.25), border*0.7);
+        alb *= 0.8 + 0.3*noise2(q.xz*6.) + 0.15*sin(length(q.xz)*9.);
+        spec = 0.02;
+      }
+    } else alb = vec3(0.16, 0.11, 0.07)*(1. - 0.4*step(0.45, max(abs(fract(p.x/3.) - .5), abs(fract(p.z/3.) - .5))));
+  }
+  else if(m < 51.5){ float h = hash13(vec3(nb, float(s), zc)); alb = h < 0.4 ? vec3(0.45, 0.06, 0.07) : h < 0.75 ? vec3(0.82, 0.78, 0.7) : vec3(0.08, 0.25, 0.27); alb *= 0.85 + 0.2*noise2(p.xz*25.); }
+  else if(m < 52.5){ alb = vec3(0.24, 0.14, 0.08)*(0.8 + 0.3*noise2(vec2(p.x + p.z, p.y*14.))); spec = 0.25; }
+  else if(m < 53.5){ alb = vec3(0.55, 0.4, 0.18); spec = 0.9; }
+  else if(m < 54.5) return vec3(2.0, 1.45, 0.8);
+  else if(m < 55.5){ alb = vec3(0.012); spec = 1.2; }
+  else if(m < 56.5){ float h = hash12(floor(vec2(c.z/0.1, ly/0.6))); alb = mix(vec3(0.35, 0.22, 0.14), 0.3 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.5); }
+  else if(m < 57.5) alb = vec3(0.16, 0.3, 0.12)*(0.6 + 0.6*noise2(p.xy*6.));
+  else alb = vec3(0.6, 0.53, 0.44)*concreteTex(p, n, 2.);
+
+  vec3 lin = clamp(dot(n, SUN_T), 0., 1.)*sh*vec3(1.2, 1.1, 1.0)*0.4;
+  lin += (0.5 + 0.5*n.y)*ao*vec3(0.3, 0.36, 0.48)*0.12;
+  lin += ao*vec3(0.06, 0.04, 0.025);
+  // the nearest pendant globe and floor lamp
+  vec3 L = fromSide(vec3(37., nb*FH + 6.6, zc), s);
+  vec3 lv = L - p; float ld = length(lv); lv /= ld;
+  lin += clamp(dot(n, lv), 0., 1.)*(0.4 + 0.6*ao)*14./(ld*ld + 2.)*vec3(1.3, 0.85, 0.45);
+  if(tp < 2.5){
+    vec3 F = fromSide(vec3(39.2, nb*FH + 1.75, zc + 2.3), s);
+    vec3 fv = F - p; float fd = length(fv); fv /= fd;
+    lin += clamp(dot(n, fv), 0., 1.)*(0.4 + 0.6*ao)*2.2/(fd*fd + 0.3)*vec3(1.3, 0.85, 0.45);
+  }
+  vec3 col = alb*lin;
+  col += spec*pow(max(dot(reflect(rd, n), lv), 0.), 40.)*vec3(1., 0.7, 0.4)*2.5*ao;
+  col += spec*pow(1. - max(dot(n, -rd), 0.), 5.)*fogColT(reflect(rd, n))*0.25*ao;
+  col += spec*sh*pow(max(dot(n, normalize(SUN_T - rd)), 0.), 40.)*0.4;
+  return col;
+}
+
 vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   vec3 alb = vec3(0.7); float spec = 0.05; vec3 emi = vec3(0.);
   int s = sideOf(p);
@@ -239,6 +397,12 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   bool inCorr = d < 0.05 && length(p.xz) > R_ATR;
   float uh = hash13(vec3(fl, uz, float(s)));
   bool lampOn = uh > 0.25;
+  float lampF = flick(uh*977.);
+  float rr = length(p.xz);
+  bool inLounge = isLounge(fl) && rr > R_ATR - 0.1 && c.x < SQ_OUT + 0.5 && m > 47.5;
+  if(isLounge(fl)){ inUnit = false; inCorr = false; }
+  float corrF = flick(fl*37. + float(s)*7. + floor(c.z/6.));
+  if(inLounge) return shadeLounge(p, n, rd, m, c, s, loungeBase(fl), ao, sh);
 
   if(m < 9.5){
     // the far towers: apartments as windows
@@ -254,7 +418,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   } else if(m < 22.5){
     alb = m < 21.5 ? vec3(0.8, 0.79, 0.77)*concreteTex(p, n, 2.) : vec3(0.16);
     if(m > 21.5) spec = 0.6;
-  } else if(m < 40.5 || m > 47.5){
+  } else if(m < 40.5 || (m > 47.5 && m < 48.5)){
     if(inUnit){
       if(n.y > 0.6){
         vec2 uv = vec2(l, d*6.);
@@ -289,9 +453,9 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   else if(m < 42.5){ alb = vec3(0.38, 0.24, 0.14)*(0.8 + 0.3*noise2(vec2(c.x + c.z, p.y*12.))); spec = 0.2; }
   else if(m < 43.5) alb = (0.3 + 0.25*cos(TAU*(uh*1.7 + vec3(0.5, 0.2, 0.)))) *(0.85 + 0.2*noise2(p.xz*30.));
   else if(m < 44.5){ float h = hash12(floor(vec2((c.x)/0.09, p.y/0.55))); alb = mix(vec3(0.4, 0.33, 0.26), 0.35 + 0.25*cos(TAU*(h + vec3(0., 0.33, 0.67))), 0.6); }
-  else if(m < 45.5){ return lampOn ? vec3(1.5, 1.2, 0.85) : vec3(0.25, 0.22, 0.2); }
+  else if(m < 45.5){ return lampOn ? mix(vec3(0.2, 0.18, 0.16), vec3(1.5, 1.2, 0.85), lampF) : vec3(0.25, 0.22, 0.2); }
   else if(m < 46.5){ alb = vec3(0.12); spec = 0.5; }
-  else return vec3(1.3, 1.25, 1.1);
+  else if(m < 47.5) return mix(vec3(0.06), vec3(1.2, 1.3, 1.28), corrF);
 
   float dif = clamp(dot(n, SUN_T), 0., 1.);
   vec3 lin = dif*sh*vec3(1.5, 1.32, 1.1)*1.6;
@@ -302,7 +466,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
     if(lampOn){
       vec3 L = fromSide(vec3(SQ_IN + 6., fl*FH + 3.0, uz*UW), s);
       vec3 lv = L - p; float ld = length(lv); lv /= ld;
-      lin += clamp(dot(n, lv), 0., 1.)*(0.35 + 0.65*ao)*12./(ld*ld + 3.)*vec3(1.3, 1.0, 0.7);
+      lin += clamp(dot(n, lv), 0., 1.)*(0.35 + 0.65*ao)*12./(ld*ld + 3.)*vec3(1.3, 1.0, 0.7)*lampF;
     }
     lin += ao*vec3(0.16, 0.14, 0.12);
     // daylight through the facade
@@ -310,7 +474,7 @@ vec3 shadeTower(vec3 p, vec3 n, vec3 rd, float m, float t, float ao, float sh){
   }
   if(inCorr){
     float cl = 1. - smoothstep(0., 3., abs(mod(c.z, 6.) - 3.));
-    lin += ao*vec3(0.9, 0.85, 0.75)*(0.25 + 0.5*cl)*(0.4 + 0.6*clamp(-n.y*0.5 + 0.5, 0., 1.));
+    lin += ao*vec3(0.82, 0.88, 0.86)*(0.08 + (0.17 + 0.5*cl)*corrF)*(0.4 + 0.6*clamp(-n.y*0.5 + 0.5, 0., 1.));
   }
   vec3 col = alb*lin + emi;
   col += spec*sh*pow(max(dot(n, normalize(SUN_T - rd)), 0.), 40.)*0.6;

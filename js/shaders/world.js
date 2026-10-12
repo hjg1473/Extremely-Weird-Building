@@ -16,7 +16,8 @@ const int SP_TOWER = 0, SP_ROOMS = 1;
 const float TS = 4.6666667;                // apartment-tower metres per scene-C unit (42 m / 9)
 const vec3  RD_D = vec3(12., 9., 24.);     // room 0's door (plane z = 24)
 const float BED_D = 2.6, BED_L = -4.1;    // bedroom door inside a flat (depth from corridor wall, lateral plane)
-uniform vec3 uHome;                         // flat you entered the rooms from: (side, floor base y, unit centre z)
+uniform vec3 uHome;
+uniform float uDip;                         // building-wide brown-out (0..1), driven from JS                         // flat you entered the rooms from: (side, floor base y, unit centre z)
 `;
 
 SHADERS.worldDispatch = `
@@ -70,7 +71,7 @@ bool portal(inout vec3 p, vec3 np, inout vec3 rd, out float tr, out float k){
       if(f >= 0.){
         ip = mix(c0, c1, f);
         float fl = floor(ip.y/FH), fy = ip.y - fl*FH;
-        if(abs(ip.x - SQ_IN - BED_D) < 0.6 && fy > 0. && fy < 2.2){
+        if(abs(ip.x - SQ_IN - BED_D) < 0.6 && fy > 0. && fy < 2.2 && !isLounge(fl)){
           tr = length(ip - c0);
           p = RD_D + vec3(ip.x - SQ_IN - BED_D, fy, ip.z - uz*UW - BED_L);
           rd = toSide(rd, s);
